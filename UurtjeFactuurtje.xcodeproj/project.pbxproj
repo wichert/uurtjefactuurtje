@@ -1,0 +1,127 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A00000000000000000000001 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* App.swift */; };
+		A00000000000000000000002 /* NativeHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000002 /* NativeHost.swift */; };
+		A00000000000000000000003 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* MenuBarController.swift */; };
+		A00000000000000000000004 /* WorkspaceMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000004 /* WorkspaceMenu.swift */; };
+		A00000000000000000000005 /* Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000005 /* Lifecycle.swift */; };
+		A00000000000000000000006 /* BudgetNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000006 /* BudgetNotifications.swift */; };
+		A00000000000000000000007 /* TrackPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000007 /* TrackPresentation.swift */; };
+		A00000000000000000000008 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000008 /* WorkspaceView.swift */; };
+		A00000000000000000000009 /* TrackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000009 /* TrackView.swift */; };
+		A0000000000000000000000A /* ProjectTaskSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000A /* ProjectTaskSheets.swift */; };
+		A0000000000000000000000B /* CorrectionForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000B /* CorrectionForm.swift */; };
+		A0000000000000000000000C /* CorrectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000C /* CorrectionSheet.swift */; };
+		A0000000000000000000000D /* TimeReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000D /* TimeReviewView.swift */; };
+		A0000000000000000000000E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000E /* SettingsView.swift */; };
+		A0000000000000000000000F /* ReportsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000F /* ReportsPresentation.swift */; };
+		A00000000000000000000010 /* ReportsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000010 /* ReportsView.swift */; };
+		A00000000000000000000011 /* WeeklyReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000011 /* WeeklyReportView.swift */; };
+		A00000000000000000000012 /* ProjectReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000012 /* ProjectReportView.swift */; };
+		A00000000000000000000013 /* ReportFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000013 /* ReportFormatting.swift */; };
+		A00000000000000000000014 /* TrackPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000014 /* TrackPresentationTests.swift */; };
+		A00000000000000000000015 /* EditorFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000015 /* EditorFlowTests.swift */; };
+		A00000000000000000000016 /* ReportsPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000016 /* ReportsPresentationTests.swift */; };
+		A00000000000000000000017 /* NativeHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000017 /* NativeHostTests.swift */; };
+		A00000000000000000000018 /* MenuBarStatusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000018 /* MenuBarStatusTests.swift */; };
+		A00000000000000000000019 /* LibraryStore in Frameworks */ = {isa = PBXBuildFile; productRef = C00000000000000000000001 /* LibraryStore */; };
+		A0000000000000000000001A /* LibraryStore in Test Frameworks */ = {isa = PBXBuildFile; productRef = C00000000000000000000002 /* LibraryStore */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D00000000000000000000001 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = E00000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = F00000000000000000000001; remoteInfo = UurtjeFactuurtje; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		B00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		B00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHost.swift; sourceTree = "<group>"; };
+		B00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
+		B00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceMenu.swift; sourceTree = "<group>"; };
+		B00000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lifecycle.swift; sourceTree = "<group>"; };
+		B00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetNotifications.swift; sourceTree = "<group>"; };
+		B00000000000000000000007 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackPresentation.swift; sourceTree = "<group>"; };
+		B00000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+		B00000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackView.swift; sourceTree = "<group>"; };
+		B0000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectTaskSheets.swift; sourceTree = "<group>"; };
+		B0000000000000000000000B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionForm.swift; sourceTree = "<group>"; };
+		B0000000000000000000000C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionSheet.swift; sourceTree = "<group>"; };
+		B0000000000000000000000D = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeReviewView.swift; sourceTree = "<group>"; };
+		B0000000000000000000000E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B0000000000000000000000F = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsPresentation.swift; sourceTree = "<group>"; };
+		B00000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsView.swift; sourceTree = "<group>"; };
+		B00000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyReportView.swift; sourceTree = "<group>"; };
+		B00000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectReportView.swift; sourceTree = "<group>"; };
+		B00000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportFormatting.swift; sourceTree = "<group>"; };
+		B00000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackPresentationTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFlowTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000016 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsPresentationTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000017 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHostTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000018 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarStatusTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000019 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B0000000000000000000001A = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = UurtjeFactuurtje.entitlements; sourceTree = "<group>"; };
+		B0000000000000000000001B /* UurtjeFactuurtje.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UurtjeFactuurtje.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B0000000000000000000001C /* UurtjeFactuurtjeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = UurtjeFactuurtjeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		110000000000000000000001 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000019 /* LibraryStore in Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
+		110000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A0000000000000000000001A /* LibraryStore in Test Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		120000000000000000000001 = {isa = PBXGroup; children = (120000000000000000000002, 120000000000000000000003, 120000000000000000000004, ); sourceTree = "<group>"; };
+		120000000000000000000002 /* UurtjeFactuurtje */ = {isa = PBXGroup; path = UurtjeFactuurtje; sourceTree = "<group>"; children = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000003, B00000000000000000000004, B00000000000000000000005, B00000000000000000000006, B00000000000000000000007, B00000000000000000000008, B00000000000000000000009, B0000000000000000000000A, B0000000000000000000000B, B0000000000000000000000C, B0000000000000000000000D, B0000000000000000000000E, B0000000000000000000000F, B00000000000000000000010, B00000000000000000000011, B00000000000000000000012, B00000000000000000000013, B00000000000000000000019, B0000000000000000000001A, ); };
+		120000000000000000000003 /* UurtjeFactuurtjeTests */ = {isa = PBXGroup; path = UurtjeFactuurtjeTests; sourceTree = "<group>"; children = (B00000000000000000000014, B00000000000000000000015, B00000000000000000000016, B00000000000000000000017, B00000000000000000000018, ); };
+		120000000000000000000004 /* Products */ = {isa = PBXGroup; name = Products; sourceTree = "<group>"; children = (B0000000000000000000001B, B0000000000000000000001C, ); };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F00000000000000000000001 /* UurtjeFactuurtje */ = {isa = PBXNativeTarget; buildConfigurationList = 130000000000000000000002; buildPhases = (140000000000000000000001 /* Sources */, 110000000000000000000001 /* Frameworks */, ); buildRules = (); dependencies = (); name = UurtjeFactuurtje; packageProductDependencies = (C00000000000000000000001 /* LibraryStore */, ); productName = UurtjeFactuurtje; productReference = B0000000000000000000001B /* UurtjeFactuurtje.app */; productType = "com.apple.product-type.application"; };
+		F00000000000000000000002 /* UurtjeFactuurtjeTests */ = {isa = PBXNativeTarget; buildConfigurationList = 130000000000000000000003; buildPhases = (140000000000000000000002 /* Sources */, 110000000000000000000002 /* Frameworks */, ); buildRules = (); dependencies = (150000000000000000000001 /* PBXTargetDependency */, ); name = UurtjeFactuurtjeTests; packageProductDependencies = (C00000000000000000000002 /* LibraryStore */, ); productName = UurtjeFactuurtjeTests; productReference = B0000000000000000000001C /* UurtjeFactuurtjeTests.xctest */; productType = "com.apple.product-type.bundle.unit-test"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E00000000000000000000001 /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 2720; TargetAttributes = {F00000000000000000000001 = {CreatedOnToolsVersion = 27.2; }; F00000000000000000000002 = {CreatedOnToolsVersion = 27.2; TestTargetID = F00000000000000000000001; }; }; }; buildConfigurationList = 130000000000000000000001; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = 120000000000000000000001; packageReferences = (160000000000000000000001 /* XCLocalSwiftPackageReference "." */, ); productRefGroup = 120000000000000000000004; projectDirPath = ""; projectRoot = ""; targets = (F00000000000000000000001, F00000000000000000000002, ); };
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		140000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001, A00000000000000000000002, A00000000000000000000003, A00000000000000000000004, A00000000000000000000005, A00000000000000000000006, A00000000000000000000007, A00000000000000000000008, A00000000000000000000009, A0000000000000000000000A, A0000000000000000000000B, A0000000000000000000000C, A0000000000000000000000D, A0000000000000000000000E, A0000000000000000000000F, A00000000000000000000010, A00000000000000000000011, A00000000000000000000012, A00000000000000000000013, ); runOnlyForDeploymentPostprocessing = 0; };
+		140000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000014, A00000000000000000000015, A00000000000000000000016, A00000000000000000000017, A00000000000000000000018, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		150000000000000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = F00000000000000000000001 /* UurtjeFactuurtje */; targetProxy = D00000000000000000000001 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		170000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ENABLE_TESTABILITY = YES; MACOSX_DEPLOYMENT_TARGET = 27.2; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Debug; };
+		170000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {MACOSX_DEPLOYMENT_TARGET = 27.2; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Release; };
+		170000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = UurtjeFactuurtje/UurtjeFactuurtje.entitlements; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = UurtjeFactuurtje/Info.plist; PRODUCT_BUNDLE_IDENTIFIER = biz.simplon.UurtjeFactuurtje; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+		170000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = UurtjeFactuurtje/UurtjeFactuurtje.entitlements; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = UurtjeFactuurtje/Info.plist; PRODUCT_BUNDLE_IDENTIFIER = biz.simplon.UurtjeFactuurtje; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_COMPILATION_MODE = wholemodule; }; name = Release; };
+		170000000000000000000005 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = biz.simplon.UurtjeFactuurtjeTests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/UurtjeFactuurtje.app/Contents/MacOS/UurtjeFactuurtje"; }; name = Debug; };
+		170000000000000000000006 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = biz.simplon.UurtjeFactuurtjeTests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/UurtjeFactuurtje.app/Contents/MacOS/UurtjeFactuurtje"; }; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		130000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (170000000000000000000001 /* Debug */, 170000000000000000000002 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		130000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (170000000000000000000003 /* Debug */, 170000000000000000000004 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		130000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (170000000000000000000005 /* Debug */, 170000000000000000000006 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		160000000000000000000001 /* XCLocalSwiftPackageReference "." */ = {isa = XCLocalSwiftPackageReference; relativePath = .; };
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C00000000000000000000001 /* LibraryStore */ = {isa = XCSwiftPackageProductDependency; package = 160000000000000000000001 /* XCLocalSwiftPackageReference "." */; productName = LibraryStore; };
+		C00000000000000000000002 /* LibraryStore */ = {isa = XCSwiftPackageProductDependency; package = 160000000000000000000001 /* XCLocalSwiftPackageReference "." */; productName = LibraryStore; };
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = E00000000000000000000001 /* Project object */;
+}
