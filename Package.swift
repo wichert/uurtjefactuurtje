@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS("27.2")],
     products: [.library(name: "LibraryStore", targets: ["LibraryStore"])],
     targets: [
-        .target(name: "LibraryStore"),
+        .target(name: "LibraryStore", linkerSettings: [.linkedLibrary("sqlite3")]),
         .testTarget(name: "LibraryStoreTests", dependencies: ["LibraryStore"])
     ],
     swiftLanguageModes: [.v6]
