@@ -9,8 +9,11 @@ struct MenuBarStatus: Equatable {
 
     @MainActor static func project(host: NativeHost, at date: Date) -> MenuBarStatus {
         let model = host.workspace
+        let pendingCount = model.snapshot?.pendingSleepIntervals.count ?? 0
+        let pendingDescription = pendingCount > 0
+            ? ", \(pendingCount) pending sleep interval(s) need review — unbilled" : ""
         func state(_ label: String, _ image: String) -> MenuBarStatus {
-            MenuBarStatus(title: "", systemImage: image, accessibilityLabel: label)
+            MenuBarStatus(title: "", systemImage: image, accessibilityLabel: label + pendingDescription)
         }
         guard model.availability == .ready || model.availability == .reviewRequired else {
             return state("Tracking unavailable: \(model.availability)", "exclamationmark.circle")
@@ -31,7 +34,7 @@ struct MenuBarStatus: Equatable {
                 return state("Tracking paused — clock or timer needs review", "exclamationmark.clock")
             }
             return MenuBarStatus(title: elapsed(seconds), systemImage: "timer",
-                                 accessibilityLabel: "Tracking \(host.track.path(entry.taskID)), \(elapsed(seconds)) elapsed")
+                                 accessibilityLabel: "Tracking \(host.track.path(entry.taskID)), \(elapsed(seconds)) elapsed" + pendingDescription)
         }
     }
     static func elapsed(_ seconds: Int64) -> String {
@@ -54,7 +57,12 @@ struct MenuBarStatus: Equatable {
             self.item = item
             item.button?.target = self; item.button?.action = #selector(toggle)
             popover.behavior = .transient
-            popover.contentViewController = NSHostingController(rootView: WorkspaceMenu(host: host))
+            let size = NSSize(width: 420, height: 560)
+            let content = NSHostingController(rootView: WorkspaceMenu(host: host))
+            content.preferredContentSize = size
+            content.view.setFrameSize(size)
+            popover.contentViewController = content
+            popover.contentSize = size
             displayTimer = Lifecycle.scheduler(every: Self.displayInterval) { [weak self] in self?.refresh(at: Date()) }
         }
         refresh(at: Date())

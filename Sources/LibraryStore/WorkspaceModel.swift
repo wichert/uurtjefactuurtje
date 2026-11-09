@@ -14,6 +14,10 @@ public enum PreferenceError: Error, Equatable, Sendable {
     case invalidFirstWeekday(Int)
 }
 
+public enum EditorReviewError: Error, Equatable, Sendable {
+    case changed
+}
+
 struct WorkspaceOperations: Sendable {
     var settings: @Sendable (Library) async throws -> LibrarySettings = { try await $0.settings() }
     var setFirstWeekday: @Sendable (Library, Int) async throws -> LibrarySettings = {
@@ -41,7 +45,12 @@ struct WorkspaceOperations: Sendable {
     public private(set) var snapshot: LibrarySnapshot?
     public private(set) var availability: WorkspaceAvailability = .closed
     public private(set) var isBusy = false
-    public private(set) var issue: WorkspaceIssue?
+    public private(set) var publicationUncertain = false
+    public private(set) var issue: WorkspaceIssue? {
+        didSet {
+            if issue == .uncertainSave { publicationUncertain = true }
+        }
+    }
     private var confirmedMigrationUndoAvailability: MigrationUndoAvailability = .unavailable(reason: "No migration to undo")
     public var migrationUndoAvailability: MigrationUndoAvailability {
         guard !closing, pending == 0, state == .ready || state == .reviewRequired else {
@@ -256,7 +265,10 @@ struct WorkspaceOperations: Sendable {
                     case .sqlite, .injectedFailure: break
                     case .revisionConflict:
                         do { self.setConfirmed(try await self.operations.snapshot(library), publishedMutation: false) }
-                        catch { self.setState(.blocked) }
+                        catch {
+                            self.issue = self.issueFor(error)
+                            self.setState(.blocked)
+                        }
                     default: self.setState(.blocked)
                     }
                 } else if !(error is TimerError) && !(error is LibraryError) && !(error is CommandError) {
@@ -314,7 +326,9 @@ struct WorkspaceOperations: Sendable {
                 await refreshMigrationUndoAvailability()
                 return result
             } catch {
-                await refreshMigrationUndoAvailability()
+                if (error as? EditorReviewError) != .changed {
+                    await refreshMigrationUndoAvailability()
+                }
                 throw error
             }
         }
@@ -347,7 +361,7 @@ struct WorkspaceOperations: Sendable {
         clearTimerSession()
         firstWeekday = nil
         setState(.opening)
-        return enqueue {
+        let opening: Task<Void, Error> = enqueue {
             if let old = self.library {
                 await self.operations.close(old)
                 self.library = nil
@@ -376,11 +390,19 @@ struct WorkspaceOperations: Sendable {
                 throw error
             }
         }
+        return Task { @MainActor in
+            try await opening.value
+            if self.snapshot != nil, self.issue == nil,
+               self.availability == .ready || self.availability == .reviewRequired {
+                self.publicationUncertain = false
+            }
+        }
     }
 
     public func open() async throws { try await enqueueOpen().value }
 
-    public func enqueueSubmit(_ command: WorkspaceCommand, expectedRevision: Int64) -> Task<LibrarySnapshot, Error> {
+    public func enqueueSubmit(_ command: WorkspaceCommand, expectedRevision: Int64,
+                              reviewedSnapshot: LibrarySnapshot? = nil) -> Task<LibrarySnapshot, Error> {
         guard !Task.isCancelled else { return rejected(CancellationError()) }
         guard !closing else { return rejected(LibraryAccessError.unavailable) }
         guard state == .ready || state == .reviewRequired else {
@@ -389,7 +411,7 @@ struct WorkspaceOperations: Sendable {
         }
         let acceptedGeneration = timerLifecycleGate.state().generation
         return enqueue {
-            guard let library = self.library, self.state == .ready else {
+            guard let library = self.library, let before = self.snapshot, self.state == .ready else {
                 if self.state == .reviewRequired {
                     self.issue = .recoveryRequired
                     throw CommandError.recoveryRequired
@@ -397,11 +419,15 @@ struct WorkspaceOperations: Sendable {
                 self.issue = .unavailable
                 throw LibraryAccessError.unavailable
             }
+            if let reviewedSnapshot, !reviewedSnapshot.editorRelevantEquals(before) {
+                self.issue = .revisionConflict
+                throw EditorReviewError.changed
+            }
+            let revision = reviewedSnapshot == nil ? expectedRevision : before.revision
             var sampledWrite = false
             do {
                 let result: LibrarySnapshot
-                if let owned = self.ownedTimerEntryID, let before = self.snapshot,
-                   before.activeTimer?.entryID == owned {
+                if let owned = self.ownedTimerEntryID, before.activeTimer?.entryID == owned {
                     if command.changesBudget, !self.timerPaused, !self.timerLifecycleGate.state().sleeping {
                         let sample = try self.timerLifecycleGate.sample(clock: self.timerClock)
                         let gate = self.timerLifecycleGate.state()
@@ -412,12 +438,12 @@ struct WorkspaceOperations: Sendable {
                         }
                         sampledWrite = true
                         result = try await self.operations.performBudget(
-                            library, command, expectedRevision, owned, sample.instant)
+                            library, command, revision, owned, sample.instant)
                     } else {
-                        result = try await self.operations.performOwned(library, command, expectedRevision, owned)
+                        result = try await self.operations.performOwned(library, command, revision, owned)
                     }
                 } else {
-                    result = try await self.operations.perform(library, command, expectedRevision)
+                    result = try await self.operations.perform(library, command, revision)
                 }
                 self.setConfirmed(result)
                 self.issue = nil
@@ -453,13 +479,19 @@ struct WorkspaceOperations: Sendable {
         }
     }
 
-    public func enqueueTaskCreation(_ request: TaskCreationRequest, expectedRevision: Int64) -> Task<TaskCreation, Error> {
+    public func enqueueTaskCreation(_ request: TaskCreationRequest, expectedRevision: Int64,
+                                    reviewedSnapshot: LibrarySnapshot? = nil) -> Task<TaskCreation, Error> {
         guard !Task.isCancelled else { return rejected(CancellationError()) }
         guard !closing, state == .ready || state == .reviewRequired else { return rejected(LibraryAccessError.unavailable) }
         let generation = timerLifecycleGate.state().generation
         return enqueue {
             guard let library = self.library, let before = self.snapshot,
                   self.state == .ready || self.state == .reviewRequired else { throw LibraryAccessError.unavailable }
+            if let reviewedSnapshot, !reviewedSnapshot.editorRelevantEquals(before) {
+                self.issue = .revisionConflict
+                throw EditorReviewError.changed
+            }
+            let revision = reviewedSnapshot == nil ? expectedRevision : before.revision
             var instant: Int64?
             do {
                 if request.start {
@@ -470,7 +502,7 @@ struct WorkspaceOperations: Sendable {
                     guard sample.generation == generation else { throw TimerError.reviewRequired }
                     instant = sample.instant
                 }
-                let result = try await self.operations.createTask(library, request, expectedRevision,
+                let result = try await self.operations.createTask(library, request, revision,
                                                                   self.ownedTimerEntryID, instant)
                 if request.start { self.ownedTimerEntryID = result.snapshot.activeTimer?.entryID }
                 self.setConfirmed(result.snapshot)
@@ -663,7 +695,10 @@ extension WorkspaceModel {
                     case .sqlite, .injectedFailure: break
                     case .revisionConflict:
                         do { self.setConfirmed(try await self.operations.snapshot(library), publishedMutation: false) }
-                        catch { self.setState(.blocked) }
+                        catch {
+                            self.issue = self.issueFor(error)
+                            self.setState(.blocked)
+                        }
                     default: self.setState(.blocked)
                     }
                 } else if !(error is CorrectionError) && !(error is TimerError) && !(error is LibraryError) {
@@ -754,12 +789,27 @@ extension WorkspaceModel {
             case .sqlite, .injectedFailure: break
             case .revisionConflict:
                 do { setConfirmed(try await operations.snapshot(library), publishedMutation: false) }
-                catch { setState(.blocked) }
+                catch {
+                    issue = issueFor(error)
+                    setState(.blocked)
+                }
             default: setState(.blocked)
             }
         } else if !(error is SleepError) && !(error is CorrectionError) && !(error is TimerError)
                     && !(error is LibraryError) && !(error is CommandError) {
             setState(.blocked)
+        }
+    }
+
+    public func requireTimerReviewAfterClose(sleeping: Bool) {
+        sleepContinuation = nil
+        ownedTimerEntryID = nil
+        timerPaused = snapshot?.activeTimer != nil
+        let generation = timerLifecycleGate.state().generation
+        handledSleepGeneration = generation
+        if !sleeping { _ = timerLifecycleGate.reset(generation: generation) }
+        if snapshot != nil, state == .ready || state == .reviewRequired {
+            setState(.reviewRequired)
         }
     }
 

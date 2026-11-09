@@ -39,3 +39,33 @@ enum ReportFormatting {
         "\(instant(start, calendar: calendar)) – \(instant(end, calendar: calendar))"
     }
 }
+
+extension ReportFormatting {
+static func budgetHours(seconds: Decimal, locale: Locale = .current) -> String {
+    var hours = seconds / 3600
+    var rounded = Decimal.zero
+    NSDecimalRound(&rounded, &hours, 2, .plain)
+    if seconds > 0 && rounded == 0 {
+        return "<\(RateInput.text(Decimal(string: "0.01")!, locale: locale)) h"
+    }
+    let prefix = rounded * 3600 == seconds ? "" : "≈"
+    return "\(prefix)\(RateInput.text(rounded, locale: locale)) h"
+}
+
+static func budgetBalance(used: Decimal, budget: Int64, locale: Locale = .current) -> String {
+    let difference = Decimal(budget) - used
+    if difference < 0 {
+        return "\(budgetHours(seconds: -difference, locale: locale)) overrun"
+    }
+    if difference == 0 { return "Budget reached" }
+    return "\(budgetHours(seconds: difference, locale: locale)) remaining"
+}
+
+static func budgetAllocation(allocated: Decimal, budget: Int64, locale: Locale = .current) -> String {
+    let difference = Decimal(budget) - allocated
+    let balance = difference < 0
+        ? "\(budgetHours(seconds: -difference, locale: locale)) overallocated"
+        : "\(budgetHours(seconds: difference, locale: locale)) unallocated"
+    return "Allocated \(budgetHours(seconds: allocated, locale: locale)) / \(budgetHours(seconds: Decimal(budget), locale: locale)); \(balance)"
+}
+}

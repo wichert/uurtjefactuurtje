@@ -41,6 +41,8 @@ public final class TimerLifecycleGate: @unchecked Sendable {
 
     public init() {}
 
+    public var currentGeneration: UInt64 { state().generation }
+
     @discardableResult public func latchSleep() -> UInt64 {
         lock.lock()
         defer { lock.unlock() }

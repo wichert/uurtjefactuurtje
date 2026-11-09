@@ -18,48 +18,74 @@ struct WorkspaceMenu: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let active = host.workspace.snapshot?.activeTimer,
-               let entry = host.workspace.snapshot?.entries.first(where: { $0.id == active.entryID }) {
-                Text(track.path(entry.taskID)).textSelection(.enabled)
+            if let count = host.workspace.snapshot?.pendingSleepIntervals.count, count > 0 {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(count) pending sleep interval(s) — unbilled")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Review pending time…") { host.openReview() }
+                }
+                .accessibilityElement(children: .contain)
             }
-            if let stop = track.ownedStop {
-                Button("Stop tracking") { host.submitTimer(stop) }.disabled(!host.acceptingMutations)
-            }
-            TextField("Search eligible tasks", text: $query)
             ScrollView {
-                VStack(alignment: .leading) {
-                    Text(query.isEmpty ? "Recent tasks" : "Search results").font(.headline)
-                    ForEach(Self.tasks(track, query: query), id: \.self) { id in
-                        Button("Start: \(track.path(id))") { host.submitTimer(.start(taskID: id)) }
-                            .disabled(!host.acceptingMutations || !host.available)
+                VStack(alignment: .leading, spacing: 10) {
+                    if let active = host.workspace.snapshot?.activeTimer,
+                       let entry = host.workspace.snapshot?.entries.first(where: { $0.id == active.entryID }) {
+                        Text(track.path(entry.taskID))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
                     }
-                }
-            }.frame(maxHeight: 180)
-            HStack {
-                Button("New task…") { host.newTask() }
-                Button("New project…") { host.newProject() }
-                Button("Add time…") { host.addTime() }
-            }.disabled(!host.acceptingMutations)
-            ForEach(host.workspace.budgetWarnings) { batch in
-                ForEach(batch.warnings, id: \.taskID) { warning in
-                    Button("\(track.path(warning.taskID)): budget \(warning.threshold.rawValue)% — reveal") {
-                        host.revealNotificationTask(warning.taskID)
+                    if let stop = track.ownedStop {
+                        Button("Stop tracking") { host.submitTimer(stop) }
+                            .disabled(!host.acceptingMutations)
                     }
+                    TextField("Search eligible tasks", text: $query)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(query.isEmpty ? "Recent tasks" : "Search results").font(.headline)
+                        ForEach(Self.tasks(track, query: query), id: \.self) { id in
+                            if let task = host.workspace.snapshot?.tasks.first(where: { $0.id == id }) {
+                                Button {
+                                    host.submitTimer(.start(taskID: id))
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(task.name).font(.headline)
+                                        Text(track.path(id)).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .accessibilityLabel("Start tracking: \(track.path(id))")
+                                .help(track.path(id))
+                                .disabled(!host.acceptingMutations || !host.available)
+                            }
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button("New task…") { host.newTask() }
+                        Button("New project…") { host.newProject() }
+                        Button("Add time…") { host.addTime() }
+                    }.disabled(!host.acceptingMutations)
+                    ForEach(host.workspace.budgetWarnings) { batch in
+                        ForEach(batch.warnings, id: \.taskID) { warning in
+                            Button("\(track.path(warning.taskID)): budget \(warning.threshold.rawValue)% — reveal") {
+                                host.revealNotificationTask(warning.taskID)
+                            }
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    WorkspaceRecovery(host: host)
+                    Divider()
+                    Button("Open Track") { host.openTrack() }
+                    Button("Open Reports") { host.openReports() }
+                    Button("Review time…") { host.openReview() }
+                    Button("Settings…") { host.openSettings() }
+                    Button("Quit UurtjeFactuurtje…") { NSApp.terminate(nil) }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let error = track.failure { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-            if let issue = host.workspace.issue { Text(String(describing: issue)).textSelection(.enabled) }
-            if !host.available {
-                Text("Workspace \(String(describing: host.workspace.availability)). Inspect before retrying; no automatic replay.")
-                Text(host.recoveryDetails.isEmpty ? host.directory.path : host.recoveryDetails).textSelection(.enabled)
-                Button("Explicitly reopen and inspect") { host.reopen() }.disabled(host.quitAttempt != nil || host.workspace.isBusy)
-            }
-            Divider()
-            Button("Open Track") { host.openTrack() }
-            Button("Open Reports") { host.openReports() }
-            Button("Review time…") { host.openReview() }
-            Button("Settings…") { host.openSettings() }
-            Button("Quit UurtjeFactuurtje…") { NSApp.terminate(nil) }
-        }.padding().frame(width: 420)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }

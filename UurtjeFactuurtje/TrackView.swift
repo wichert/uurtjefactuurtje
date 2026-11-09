@@ -6,16 +6,27 @@ struct TrackView: View {
     @FocusState private var listFocused: Bool
     private var model: WorkspaceModel { presentation.workspace }
     var body: some View {
-        VStack(alignment: .leading) {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in timerStrip }
+        VStack(alignment: .leading, spacing: 8) {
+            if let count = model.snapshot?.pendingSleepIntervals.count, count > 0 {
+                HStack {
+                    Text("\(count) pending sleep interval(s) — unbilled")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Review pending time…") { presentation.reviewTime() }
+                }
+                .accessibilityElement(children: .contain)
+            }
             HStack {
                 Picker("Project", selection: $presentation.selectedProjectID) {
                     Text("Select project").tag(UUID?.none)
-                    ForEach(presentation.projects) { Text($0.name + ($0.isArchived ? " (archived)" : "")).tag(Optional($0.id)) }
+                    ForEach(presentation.projects) {
+                        Text($0.name + ($0.isArchived ? " (archived)" : "")).tag(Optional($0.id))
+                    }
                 }
+                .frame(maxWidth: 300)
                 Toggle("Show archived", isOn: $presentation.showArchived)
-                TextField("Search full project / task path", text: $presentation.search)
             }
+            TextField("Search full project / task path", text: $presentation.search)
             HStack {
                 Button("New project") { presentation.editProject() }
                 if let project = presentation.projects.first(where: { $0.id == presentation.selectedProjectID }) {
@@ -26,88 +37,168 @@ struct TrackView: View {
                 Button("Review time") { presentation.reviewTime() }
             }
             if model.snapshot?.projects.isEmpty == true {
-                ContentUnavailableView("Create your first project", systemImage: "folder", description: Text("Then create a leaf task. Selection alone never starts tracking."))
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Create your first project", systemImage: "folder").font(.headline)
+                    Text("Use New project above, then create a leaf task. Selection alone never starts tracking.")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            ScrollViewReader { scroll in
-                List(selection: $presentation.selectedTaskID) {
+            GeometryReader { geometry in
+                VStack(alignment: .leading, spacing: 8) {
+                    ScrollViewReader { scroll in
+                        List(selection: $presentation.selectedTaskID) {
                     if let project = presentation.projects.first(where: { $0.id == presentation.selectedProjectID }) {
-                        ForEach(presentation.rows(projectID: project.id)) { row in
-                            HStack {
-                                if !row.isLeaf {
-                                    Button {
-                                        if !presentation.expandedTaskIDs.insert(row.id).inserted { presentation.expandedTaskIDs.remove(row.id) }
-                                    } label: { Image(systemName: presentation.expandedTaskIDs.contains(row.id) || !presentation.search.isEmpty ? "chevron.down" : "chevron.right") }
-                                        .buttonStyle(.borderless).accessibilityLabel("Toggle children of \(row.path)")
+                        Section("Tasks") {
+                            ForEach(presentation.rows(projectID: project.id)) { row in
+                                HStack {
+                                    if !row.isLeaf {
+                                        Button {
+                                            if !presentation.expandedTaskIDs.insert(row.id).inserted {
+                                                presentation.expandedTaskIDs.remove(row.id)
+                                            }
+                                        } label: {
+                                            Image(systemName: presentation.expandedTaskIDs.contains(row.id) || !presentation.search.isEmpty ? "chevron.down" : "chevron.right")
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityLabel("Toggle children of \(row.path)")
+                                    }
+                                    Text(row.path).lineLimit(2).help(row.path)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    if !row.isLeaf {
+                                        Text("Parent — not startable").foregroundStyle(.secondary)
+                                    } else {
+                                        Button("Start") { presentation.timer(.start(taskID: row.id)) }
+                                            .disabled(!presentation.eligible(row.id) || model.isBusy)
+                                    }
+                                    Button("Edit") { presentation.editTask(row.id) }
                                 }
-                                Text(row.task.name).help(row.path)
-                                Spacer()
-                                if !row.isLeaf { Text("Parent — not startable").foregroundStyle(.secondary) }
-                                else { Button("Start") { presentation.timer(.start(taskID: row.id)) }.disabled(!presentation.eligible(row.id) || model.isBusy) }
-                                Button("Edit") { presentation.editTask(row.id) }
-                            }.padding(.leading, CGFloat(row.depth) * 16).tag(row.id).id(row.id)
-                            .accessibilityElement(children: .contain).accessibilityLabel(row.path)
-                            .contextMenu {
-                                Button("New subtask") { presentation.newTask(projectID: project.id, parentID: row.id) }.disabled(project.isArchived)
-                                Button("Add time") { presentation.addTime(taskID: row.id) }.disabled(!row.isLeaf || project.isArchived)
-                                Button("Reveal path") { presentation.revealTask(row.id) }
+                                .padding(.leading, CGFloat(min(row.depth, 3)) * 16)
+                                .tag(row.id).id(row.id)
+                                .accessibilityElement(children: .contain).accessibilityLabel(row.path)
+                                .contextMenu {
+                                    Button("New subtask") { presentation.newTask(projectID: project.id, parentID: row.id) }.disabled(project.isArchived)
+                                    Button("Add time") { presentation.addTime(taskID: row.id) }.disabled(!row.isLeaf || project.isArchived)
+                                    Button("Reveal path") { presentation.revealTask(row.id) }
+                                }
                             }
                         }
                     }
-                }.focused($listFocused)
+                }
+                .focused($listFocused)
                 .onKeyPress(.return) {
-                    guard let id = presentation.selectedTaskID, presentation.canStartFromList(id, listFocused: listFocused), !model.isBusy else { return .ignored }
+                    guard let id = presentation.selectedTaskID,
+                          presentation.canStartFromList(id, listFocused: listFocused), !model.isBusy else { return .ignored }
                     presentation.timer(.start(taskID: id)); return .handled
                 }
-                .onChange(of: presentation.reveal?.id) { _, _ in reveal(scroll) }
+                .onChange(of: presentation.reveal?.id, initial: true) { _, _ in reveal(scroll) }
                 .onChange(of: presentation.sheet?.id) { _, new in if new == nil { reveal(scroll) } }
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    budgets
-                    recent
-                    today
-                    undo
+                    }
+                    .frame(height: max(100, geometry.size.height * 0.45))
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            TimelineView(.periodic(from: .now, by: 1)) { _ in timerStrip }
+                            budgets
+                            recent
+                            today
+                            undo
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            }.frame(maxHeight: 280)
-        }.padding()
+            }
+        }
+        .padding()
     }
     private func reveal(_ scroll: ScrollViewProxy) {
-        guard presentation.sheet == nil, let request = presentation.reveal else { return }
+        guard let request = presentation.consumeReveal() else { return }
         // Only an explicit reveal moves focus; publications and warnings do not.
         scroll.scrollTo(request.taskID); listFocused = true
     }
     @ViewBuilder private var timerStrip: some View {
-        if let active = model.snapshot?.activeTimer, let row = model.snapshot?.entries.first(where: { $0.id == active.entryID }) {
-            HStack {
-                Text(presentation.path(row.taskID)).font(.headline)
-                Text(String(describing: model.timerStatus))
+        if let active = model.snapshot?.activeTimer,
+           let row = model.snapshot?.entries.first(where: { $0.id == active.entryID }) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(presentation.path(row.taskID)).font(.headline)
+                        .lineLimit(2).help(presentation.path(row.taskID))
+                        .accessibilityLabel(presentation.path(row.taskID))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let stop = presentation.ownedStop {
+                        Button("Stop") { presentation.timer(stop) }.disabled(model.isBusy)
+                    } else {
+                        Button("Review interruption") { presentation.reviewTime() }
+                    }
+                    Button("Reveal running task") { presentation.revealTask(row.taskID) }
+                }
                 switch Result(catching: { try model.timerElapsedSeconds() }) {
-                case .success(let seconds): Text(seconds.map { "\($0) seconds — provisional / checkpoint-bounded" } ?? "No active elapsed time")
+                case .success(let seconds):
+                    Text(seconds.map { "\($0) seconds — provisional / checkpoint-bounded" } ?? "No active elapsed time")
                 case .failure(let error): Text(String(describing: error)).textSelection(.enabled)
                 }
-                Text("Saved checkpoint: \(active.checkpointAt)").textSelection(.enabled)
-                if let stop = presentation.ownedStop { Button("Stop") { presentation.timer(stop) }.disabled(model.isBusy) }
-                else { Button("Review interruption") { presentation.reviewTime() } }
-                Button("Reveal running task") { presentation.revealTask(row.taskID) }
-            }.accessibilityElement(children: .contain)
-        } else { Text("No running timer. Pending sleep is never included in elapsed time.") }
+                DisclosureGroup("Timer details") {
+                    Text(String(describing: model.timerStatus)).textSelection(.enabled)
+                    Text("Saved checkpoint: \(active.checkpointAt)").textSelection(.enabled)
+                }
+            }
+            .accessibilityElement(children: .contain)
+        } else {
+            Text("No running timer. Pending sleep is never included in elapsed time.")
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
     @ViewBuilder private var budgets: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            switch Result(catching: { try model.budgetUsage() }) {
-            case .success(let usage):
-                ForEach((model.snapshot?.tasks ?? []).filter { $0.projectID == presentation.selectedProjectID && $0.budgetSeconds != nil }) { task in
-                    if let budget = task.budgetSeconds {
-                        let used = usage[task.id] ?? 0
-                        let band = BudgetRules.band(used: used, budget: budget)
-                        VStack(alignment: .leading) {
-                            Text("\(presentation.path(task.id)) — lifetime \(used.description) / \(budget) seconds; band \(band.rawValue)%\(used > Decimal(budget) ? "; overrun" : ""); open use provisional, otherwise checkpoint")
-                            ProgressView(value: min(1, max(0, NSDecimalNumber(decimal: used / Decimal(budget)).doubleValue)))
-                                .accessibilityLabel("Lifetime budget for \(presentation.path(task.id))").accessibilityValue("\(used.description) of \(budget) seconds")
+            if let snapshot = model.snapshot {
+                switch Result(catching: {
+                    (try model.budgetUsage(), try BudgetRules.allocations(in: snapshot))
+                }) {
+                case .success(let projection):
+                    let usage = projection.0
+                    let allocations = projection.1.filter { item in
+                        snapshot.tasks.contains { $0.id == item.taskID && $0.projectID == presentation.selectedProjectID }
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !allocations.isEmpty {
+                            Text("Lifetime use includes descendants; open use is provisional when safe, otherwise checkpoint-bounded. Pending sleep is excluded. Allocation reserves budgets, not time used.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        ForEach(allocations, id: \.taskID) { item in
+                            let used = usage[item.taskID] ?? 0
+                            let band = BudgetRules.band(used: used, budget: item.limitSeconds)
+                            let ratio = min(Decimal(1), max(Decimal.zero, used / Decimal(item.limitSeconds)))
+                            let difference = Decimal(item.limitSeconds) - used
+                            let balance = difference < 0
+                                ? "\(RateInput.text(-difference)) seconds over budget"
+                                : "\(RateInput.text(difference)) seconds remaining"
+                            let exact = "\(RateInput.text(used)) / \(item.limitSeconds) seconds used; \(balance)"
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(presentation.path(item.taskID)).font(.headline)
+                                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                Text("\(ReportFormatting.budgetHours(seconds: used)) / \(ReportFormatting.budgetHours(seconds: Decimal(item.limitSeconds))) used — \(ReportFormatting.budgetBalance(used: used, budget: item.limitSeconds))")
+                                    .monospacedDigit().help(exact)
+                                    .accessibilityLabel("Lifetime usage").accessibilityValue(exact)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                ProgressView(value: NSDecimalNumber(decimal: ratio).doubleValue)
+                                    .accessibilityLabel("Lifetime budget progress").accessibilityValue(exact)
+                                if band != .none {
+                                    Text(band == .hundred ? "100% reached — tracking may continue" : "80% reached — tracking may continue")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                if snapshot.tasks.contains(where: { $0.parentTaskID == item.taskID }) {
+                                    Text(ReportFormatting.budgetAllocation(allocated: item.allocatedSeconds, budget: item.limitSeconds))
+                                        .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                        .help("\(RateInput.text(item.allocatedSeconds)) / \(item.limitSeconds) seconds allocated")
+                                        .accessibilityLabel("Descendant frontier allocation")
+                                        .accessibilityValue("\(RateInput.text(item.allocatedSeconds)) of \(item.limitSeconds) seconds allocated; \(RateInput.text(Decimal(item.limitSeconds) - item.allocatedSeconds)) seconds unallocated")
+                                }
+                            }
                         }
                     }
+                case .failure(let error):
+                    Text("Budget projection failed: \(String(describing: error))").textSelection(.enabled)
                 }
-            case .failure(let error): Text("Budget projection failed: \(String(describing: error))").textSelection(.enabled)
             }
         }
     }
@@ -117,7 +208,7 @@ struct TrackView: View {
         let ids = entries.compactMap { seen.insert($0.taskID).inserted && presentation.eligible($0.taskID) ? $0.taskID : nil }.prefix(8)
         return GroupBox("Recent tasks (explicit Start only)") {
             ForEach(Array(ids), id: \.self) { id in
-                HStack { Button(presentation.path(id)) { presentation.revealTask(id) }; Button("Start") { presentation.timer(.start(taskID: id)) }.disabled(model.isBusy) }
+                HStack { Button(presentation.path(id)) { presentation.revealTask(id) }.help(presentation.path(id)); Button("Start") { presentation.timer(.start(taskID: id)) }.disabled(model.isBusy) }
             }
         }
     }

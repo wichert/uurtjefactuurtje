@@ -33,64 +33,121 @@ struct ProjectSheet: View {
     let token: UUID
     @State var draft: ProjectDraft
     @State private var error: String?
-    @State private var refreshedRevision: Int64?
+    @State private var refreshedSnapshot: LibrarySnapshot?
     private var model: WorkspaceModel { presentation.workspace }
+    private var reviewedSnapshot: LibrarySnapshot? { refreshedSnapshot ?? draft.reviewedSnapshot }
+    private var libraryChanged: Bool {
+        guard let latest = model.snapshot else { return true }
+        if let reviewedSnapshot { return !reviewedSnapshot.editorRelevantEquals(latest) }
+        return latest.revision != draft.observedRevision
+    }
     var body: some View {
         Form {
-            Text(draft.isNew ? "New project" : "Edit project").font(.headline)
-            TextField("Name", text: $draft.name)
-            TextField("Hourly rate (exact decimal, no grouping)", text: $draft.rateText)
-            TextField("ISO currency code", text: $draft.currencyCode)
-            if let original = model.snapshot?.projects.first(where: { $0.id == draft.id }), original.currencyCode != draft.currencyCode {
-                Toggle("Relabel all history from \(original.currencyCode); no currency conversion", isOn: Binding(
-                    get: { draft.confirmedPreviousCurrency == original.currencyCode },
-                    set: { draft.confirmedPreviousCurrency = $0 ? original.currencyCode : nil }))
-            }
-            if model.snapshot?.revision != (refreshedRevision ?? draft.observedRevision) {
-                Text("Library changed. Review these fields against the confirmed rows before retrying.")
-                Button("I reviewed the latest project") { refreshedRevision = model.snapshot?.revision; draft.confirmedPreviousCurrency = nil; draft.archiveConfirmed = false }
-            }
-            if !draft.isNew, let project = model.snapshot?.projects.first(where: { $0.id == draft.id }) {
-                Toggle(project.isArchived ? "Confirm restoring this project" : "Confirm archive; history is retained", isOn: $draft.archiveConfirmed)
-                Button(project.isArchived ? "Restore project" : "Archive project") { save(archive: !project.isArchived) }
-                    .disabled(!draft.archiveConfirmed)
-                if let active = model.snapshot?.activeTimer,
-                   let entry = model.snapshot?.entries.first(where: { $0.id == active.entryID }),
-                   model.snapshot?.tasks.first(where: { $0.id == entry.taskID })?.projectID == draft.id {
-                    Text("Stop or review this project's timer before archiving. Archive is never silently combined with Stop.")
+            Section(draft.isNew ? "New project" : "Edit project") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Name")
+                    TextField("Name", text: $draft.name).labelsHidden().accessibilityLabel("Project name")
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Hourly rate")
+                    TextField("Hourly rate", text: $draft.rateText)
+                        .labelsHidden().accessibilityLabel("Hourly rate")
+                        .frame(maxWidth: 200, alignment: .leading)
+                    Text("Enter a nonnegative decimal using your Mac's decimal separator; no grouping separators.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if !draft.isNew {
+                        Text("Changing the hourly rate recalculates all saved time in this project at the new rate, including historical reports. It does not preserve past rates.")
+                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Currency")
+                    TextField("ISO currency code", text: $draft.currencyCode)
+                        .labelsHidden().accessibilityLabel("ISO currency code")
+                        .frame(maxWidth: 100, alignment: .leading)
+                    Text("Use an uppercase ISO code, for example EUR or USD. No currency conversion is performed.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                if let original = model.snapshot?.projects.first(where: { $0.id == draft.id }), original.currencyCode != draft.currencyCode {
+                    Toggle(isOn: Binding(
+                        get: { draft.confirmedPreviousCurrency == original.currencyCode },
+                        set: { draft.confirmedPreviousCurrency = $0 ? original.currencyCode : nil })) {
+                        Text("Relabel all history from \(original.currencyCode); no currency conversion")
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
-            if let error { Text(error).textSelection(.enabled).foregroundStyle(.red) }
-            HStack {
-                Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save(archive: nil) }.keyboardShortcut(.defaultAction)
+            if libraryChanged {
+                Section("Review required") {
+                    Text("Library changed. Review these fields against the confirmed rows before retrying.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("I reviewed the latest project") {
+                        guard let latest = model.snapshot else { return }
+                        refreshedSnapshot = latest
+                        draft.confirmedPreviousCurrency = nil
+                        draft.archiveConfirmed = false
+                    }
+                }
+            }
+            if !draft.isNew, let project = model.snapshot?.projects.first(where: { $0.id == draft.id }) {
+                Section("Availability") {
+                    Toggle(isOn: $draft.archiveConfirmed) {
+                        Text(project.isArchived ? "Confirm restoring this project" : "Confirm archive; history is retained")
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Button(project.isArchived ? "Restore project" : "Archive project") { save(archive: !project.isArchived) }
+                        .disabled(!draft.archiveConfirmed)
+                    if let active = model.snapshot?.activeTimer,
+                       let entry = model.snapshot?.entries.first(where: { $0.id == active.entryID }),
+                       model.snapshot?.tasks.first(where: { $0.id == entry.taskID })?.projectID == draft.id {
+                        Text("Stop or review this project's timer before archiving. Archive is never silently combined with Stop.")
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            Section {
+                if let error {
+                    Text(error).textSelection(.enabled).foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button("Save") { save(archive: nil) }.keyboardShortcut(.defaultAction)
+                }
             }
         }
-        .padding().frame(minWidth: 420).disabled(presentation.acceptedWork)
+        .formStyle(.grouped)
+        .frame(minWidth: 360, idealWidth: 480, maxWidth: 560,
+               minHeight: 280, idealHeight: 440, maxHeight: 520)
+        .disabled(presentation.acceptedWork)
         .onChange(of: draft.currencyCode) { _, _ in draft.confirmedPreviousCurrency = nil }
     }
     private func save(archive: Bool?) {
-        guard let revision = model.snapshot?.revision,
-              revision == (refreshedRevision ?? draft.observedRevision) else { error = "Review the changed library first."; return }
-        guard let rate = RateInput.parse(draft.rateText) else { error = "Enter a complete, nonnegative, exactly representable localized decimal rate."; return }
+        guard let latest = model.snapshot, !libraryChanged else { error = "Review the changed library first."; return }
         let command: WorkspaceCommand
         if let archive {
             guard draft.archiveConfirmed else { return }
             command = .setArchived(id: draft.id, archived: archive)
-        } else if draft.isNew {
-            command = .createProject(id: draft.id, name: draft.name, rate: rate, currency: draft.currencyCode)
         } else {
-            command = .updateProject(id: draft.id, name: draft.name, rate: rate, currency: draft.currencyCode,
-                                     confirmedPreviousCurrency: draft.confirmedPreviousCurrency)
+            if let message = draft.inputError(in: latest) { error = message; return }
+            guard let rate = RateInput.parse(draft.rateText) else {
+                error = "Enter a nonnegative decimal rate without grouping separators."; return
+            }
+            if draft.isNew {
+                command = .createProject(id: draft.id, name: draft.name, rate: rate, currency: draft.currencyCode)
+            } else {
+                command = .updateProject(id: draft.id, name: draft.name, rate: rate, currency: draft.currencyCode,
+                                         confirmedPreviousCurrency: draft.confirmedPreviousCurrency)
+            }
         }
         guard presentation.begin(token) else { return }
-        let first = draft.isNew && model.snapshot?.projects.isEmpty == true
-        let result = model.enqueueSubmit(command, expectedRevision: revision)
+        let result = model.enqueueSubmit(command, expectedRevision: latest.revision,
+                                         reviewedSnapshot: reviewedSnapshot)
         Task { @MainActor in
             do {
                 _ = try await result.value
                 presentation.complete(token)
-                if first, presentation.sheet == nil { presentation.selectedProjectID = draft.id; presentation.newTask(projectID: draft.id) }
             } catch { self.error = String(describing: error); presentation.complete(token, error: error) }
         }
     }
@@ -102,43 +159,85 @@ struct TaskSheet: View {
     @State var draft: TaskDraft
     @State private var error: String?
     private var model: WorkspaceModel { presentation.workspace }
+    private var libraryChanged: Bool {
+        guard let latest = model.snapshot else { return true }
+        if let reviewed = draft.reviewedSnapshot { return !reviewed.editorRelevantEquals(latest) }
+        return latest.revision != draft.observedRevision
+    }
     var body: some View {
         Form {
-            Text(draft.isNew ? "New task" : "Edit task").font(.headline)
-            TextField("Name", text: $draft.name)
-            if draft.isNew {
-                Picker("Project", selection: Binding(get: { draft.projectID }, set: { draft.relocate(projectID: $0, parentID: nil) })) {
-                    ForEach((model.snapshot?.projects ?? []).filter { !$0.isArchived }) { Text($0.name).tag($0.id) }
+            Section(draft.isNew ? "New task" : "Edit task") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Name")
+                    TextField("Name", text: $draft.name).labelsHidden().accessibilityLabel("Task name")
                 }
-                Picker("Parent", selection: Binding(get: { draft.parentID }, set: { draft.relocate(projectID: draft.projectID, parentID: $0) })) {
-                    Text("Project root").tag(UUID?.none)
-                    ForEach(presentation.allRows(projectID: draft.projectID)) { Text($0.path).tag(Optional($0.id)) }
+                if draft.isNew {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Project")
+                        Picker("Project", selection: Binding(get: { draft.projectID }, set: { draft.relocate(projectID: $0, parentID: nil) })) {
+                            ForEach((model.snapshot?.projects ?? []).filter { !$0.isArchived }) { Text($0.name).tag($0.id) }
+                        }.labelsHidden().accessibilityLabel("Project")
+                        Text("Parent")
+                        Picker("Parent", selection: Binding(get: { draft.parentID }, set: { draft.relocate(projectID: draft.projectID, parentID: $0) })) {
+                            Text("Project root").tag(UUID?.none)
+                            ForEach(presentation.allRows(projectID: draft.projectID)) { Text($0.path).tag(Optional($0.id)) }
+                        }.labelsHidden().accessibilityLabel("Parent")
+                        Text(draft.parentID.map { presentation.path($0) } ?? "Project root")
+                            .font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("New tasks start without a budget. Edit the created task to set one.")
+                        .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    if needsMigration {
+                        Text("This leaf owns saved entries or pending sleep. Move all of them to an ordinary Generic child; pending sleep stays unbilled.")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Toggle(isOn: $draft.migrationAccepted) {
+                            Text("I confirm migration of entries and pending sleep")
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                } else {
+                    Text(presentation.path(draft.id)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Toggle("Lifetime budget", isOn: $draft.budgetEnabled)
+                    if draft.budgetEnabled {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Hours")
+                            TextField("Hours", text: $draft.budgetHours)
+                                .labelsHidden().accessibilityLabel("Lifetime budget in hours")
+                                .frame(maxWidth: 200, alignment: .leading)
+                        }
+                    }
                 }
-                Text("New tasks start without a budget. Edit the created task to set one.")
-                if needsMigration {
-                    Text("This leaf owns saved entries or pending sleep. Move all of them to an ordinary Generic child; pending sleep stays unbilled.")
-                    Toggle("I confirm migration of entries and pending sleep", isOn: $draft.migrationAccepted)
-                }
-            } else {
-                Text(presentation.path(draft.id)).textSelection(.enabled)
-                Toggle("Lifetime budget", isOn: $draft.budgetEnabled)
-                if draft.budgetEnabled { TextField("Hours", text: $draft.budgetHours) }
             }
-            constraints
-            if model.snapshot?.revision != draft.observedRevision {
-                Text("Library changed. Review fields, location and budget constraints before resubmitting.")
-                Button("I reviewed the latest task and constraints") {
-                    draft.observedRevision = model.snapshot?.revision ?? draft.observedRevision
-                    draft.migrationAccepted = false
+            Section("Budget constraints") { constraints }
+            if libraryChanged {
+                Section("Review required") {
+                    Text("Library changed. Review fields, location and budget constraints before resubmitting.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("I reviewed the latest task and constraints") {
+                        guard let latest = model.snapshot else { return }
+                        draft.reviewedSnapshot = latest
+                        draft.observedRevision = latest.revision
+                        draft.migrationAccepted = false
+                        sync()
+                    }
                 }
             }
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-            HStack {
-                Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
-                Button(draft.isNew ? "Create" : "Save") { save(start: false) }.keyboardShortcut(.defaultAction)
-                if draft.isNew { Button("Create & Start") { save(start: true) } }
+            Section {
+                if let error {
+                    Text(error).foregroundStyle(.red).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button(draft.isNew ? "Create" : "Save") { save(start: false) }.keyboardShortcut(.defaultAction)
+                    if draft.isNew { Button("Create & Start") { save(start: true) } }
+                }
             }
-        }.padding().frame(minWidth: 440).disabled(presentation.acceptedWork)
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 360, idealWidth: 480, maxWidth: 560,
+               minHeight: 280, idealHeight: 440, maxHeight: 520)
+        .disabled(presentation.acceptedWork)
         .onChange(of: draft.name) { _, _ in sync() }
         .onChange(of: draft.budgetHours) { _, _ in sync() }
         .onChange(of: draft.budgetEnabled) { _, _ in sync() }
@@ -157,7 +256,13 @@ struct TaskSheet: View {
                 Text("Descendant frontier minimum: \(allowance.minimumSeconds.description) seconds")
                 Text("Maximum: \(allowance.maximumSeconds?.description ?? "unbounded") seconds")
                 if let id = allowance.limitingAncestorID {
-                    Button("Edit limiting budget: \(presentation.path(id))") { sync(); presentation.editConstrainingBudget(taskID: id) }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Limiting budget")
+                        Button { sync(); presentation.editConstrainingBudget(taskID: id) } label: {
+                            Text(presentation.path(id)).multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }.accessibilityLabel("Edit limiting budget: \(presentation.path(id))")
+                    }
                 }
             case .failure(let error): Text(String(describing: error)).textSelection(.enabled)
             }
@@ -165,6 +270,7 @@ struct TaskSheet: View {
             case .success(let allocations):
                 ForEach(allocations.filter { $0.taskID == draft.id || $0.taskID == draft.parentID }, id: \.taskID) { item in
                     Text("\(presentation.path(item.taskID)): allocated \(item.allocatedSeconds.description) / \(item.limitSeconds) seconds")
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
             case .failure(let error): Text(String(describing: error)).textSelection(.enabled)
             }
@@ -172,22 +278,26 @@ struct TaskSheet: View {
     }
     private func sync() { presentation.updateTaskDraft(draft) }
     private func save(start: Bool) {
-        guard draft.observedRevision == model.snapshot?.revision else { error = "Review the changed library first."; return }
+        guard let latest = model.snapshot, !libraryChanged else { error = "Review the changed library first."; return }
+        if let message = draft.inputError(in: latest) { error = message; return }
         guard !needsMigration || draft.migrationAccepted else { error = "Confirm entry and pending-sleep migration."; return }
-        guard draft.isNew || !draft.budgetEnabled || draft.parsedBudget != nil else { error = "Budget must be positive whole seconds expressed in localized hours."; return }
+        guard draft.isNew || !draft.budgetEnabled || draft.parsedBudget != nil else { error = "Enter positive budget hours that represent a whole number of seconds."; return }
         sync()
         guard presentation.begin(token) else { return }
         if draft.isNew {
-            let result = model.enqueueTaskCreation(draft.request(start: start), expectedRevision: draft.observedRevision)
+            let result = model.enqueueTaskCreation(draft.request(start: start), expectedRevision: draft.observedRevision,
+                                                   reviewedSnapshot: draft.reviewedSnapshot)
             Task { @MainActor in
                 do {
                     let creation = try await result.value
+                    guard token == presentation.routeToken else { return }
                     presentation.feedback = creation.genericID.map { "Created Generic \($0): moved \(creation.movedEntryCount) entries and \(creation.movedPendingCount) pending intervals." } ?? "Task created."
                     presentation.complete(token)
                 } catch { self.error = String(describing: error); presentation.complete(token, error: error) }
             }
         } else {
-            let result = model.enqueueSubmit(.editTask(id: draft.id, name: draft.name, budgetSeconds: draft.parsedBudget), expectedRevision: draft.observedRevision)
+            let result = model.enqueueSubmit(.editTask(id: draft.id, name: draft.name, budgetSeconds: draft.parsedBudget),
+                                             expectedRevision: draft.observedRevision, reviewedSnapshot: draft.reviewedSnapshot)
             Task { @MainActor in
                 do {
                     _ = try await result.value

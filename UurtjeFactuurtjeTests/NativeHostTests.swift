@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Foundation
 import Testing
 import UserNotifications
@@ -21,6 +22,13 @@ private actor NativeSubmissionGate {
     func release() {
         released = true; continuation?.resume(); continuation = nil
     }
+}
+
+private final class NativeQuitWriteProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func record() { lock.withLock { value += 1 } }
+    var count: Int { lock.withLock { value } }
 }
 
 @Suite @MainActor struct NativeHostTests {
@@ -243,8 +251,8 @@ private actor NativeSubmissionGate {
             #expect(replies == 3); #expect(closes == 1); #expect(opens > 0)
             #expect(!host.acceptingMutations); #expect(!host.recoveryDetails.isEmpty)
             host.reopen(); await host.drain()
-            #expect(host.acceptingMutations); #expect(t.workspace.snapshot?.activeTimer == nil)
-            #expect(t.workspace.snapshot?.entries.isEmpty == true) // Paused Stop uses the zero-duration confirmed checkpoint; no replay.
+            #expect(host.acceptingMutations); #expect(t.workspace.snapshot?.activeTimer != nil)
+            #expect(t.workspace.snapshot?.entries.last?.endAt == nil) // Paused timer is left unchanged for review.
             host.invalidate()
         }
     }
@@ -305,26 +313,752 @@ private actor NativeSubmissionGate {
         }
     }
 
-    @Test func unresolvedTimeCancelsQuitWithoutClose() async throws {
+    @Test func savedPendingReviewDefersUnbilledAndStopsOwnedTimerOnce() async throws {
         try await withTrack { t, directory in
             let host = NativeHost(directory: directory, workspace: t.workspace), clock = NativeClock()
             t.workspace.configureTimer(clock: { clock.read() })
             let p = try await project(t), id = try await task(t, project: p)
             host.submitTimer(.start(taskID: id)); await host.drain()
             let lifecycle = Lifecycle(host: host)
+            clock.set(110); lifecycle.willSleep(); await host.drain()
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 120)); await host.drain()
+            let before = try #require(t.workspace.snapshot)
+            #expect(before.pendingSleepIntervals.count == 1)
+            let writes = NativeQuitWriteProbe()
+            let expectedStop = host.track.ownedStop
+            var closes = 0, replies = 0
+            t.workspace.configureTimer(clock: { 130 }, write: { library, command, revision, instant, entry in
+                writes.record()
+                #expect(command == expectedStop)
+                return try await library.performTimer(command, expectedRevision: revision, instant: instant, newEntryID: entry)
+            })
             lifecycle.confirmQuit = { true }
+            lifecycle.close = { model in
+                closes += 1
+                #expect(model.snapshot?.activeTimer == nil)
+                #expect(model.snapshot?.pendingSleepIntervals == before.pendingSleepIntervals)
+                #expect(model.snapshot?.entries.contains { $0.startAt == 110 && $0.endAt == 120 } == false)
+                await model.close()
+            }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(ok); replies += 1; done.resume() }
+                lifecycle.requestQuit(); lifecycle.requestQuit()
+            }
+            #expect(writes.count == 1 && closes == 1 && replies == 1)
+            lifecycle.requestQuit()
+            #expect(closes == 1 && replies == 1)
+            try await t.workspace.open()
+            #expect(t.workspace.snapshot?.pendingSleepIntervals == before.pendingSleepIntervals)
+            #expect(t.workspace.snapshot?.activeTimer == nil)
+            #expect(lifecycle.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared) == false)
+            host.invalidate()
+        }
+    }
+
+    @Test func sleepingUnknownEndClosesWithoutInferringBounds() async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace), clock = NativeClock()
+            t.workspace.configureTimer(clock: { clock.read() })
+            let p = try await project(t), id = try await task(t, project: p)
+            host.submitTimer(.start(taskID: id)); await host.drain()
+            let lifecycle = Lifecycle(host: host)
+            clock.set(110); lifecycle.willSleep(); await host.drain()
+            let before = try #require(t.workspace.snapshot)
+            #expect(before.pendingSleepIntervals.first?.wakeAt == nil)
+            let writes = NativeQuitWriteProbe()
+            t.workspace.configureTimer(clock: { 999 }, write: { _, _, _, _, _ in
+                writes.record(); throw StorageError.injectedFailure
+            })
+            lifecycle.confirmQuit = { true }
+            lifecycle.close = { model in
+                #expect(model.snapshot == before)
+                await model.close()
+            }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(ok); done.resume() }
+                lifecycle.requestQuit()
+            }
+            #expect(writes.count == 0)
+            try await t.workspace.open()
+            #expect(t.workspace.snapshot == before)
+            host.invalidate()
+        }
+    }
+
+    @Test func unavailableQuitDoesNotReopenOrMutate() async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            let p = try await project(t), id = try await task(t, project: p)
+            host.submitTimer(.start(taskID: id)); await host.drain()
+            let before = try #require(t.workspace.snapshot)
+            await t.workspace.close()
+            let writes = NativeQuitWriteProbe()
             var closes = 0
+            t.workspace.configureTimer(clock: { 999 }, write: { _, _, _, _, _ in
+                writes.record(); throw StorageError.injectedFailure
+            })
+            let lifecycle = Lifecycle(host: host)
+            lifecycle.confirmQuit = { true }
+            lifecycle.close = { model in closes += 1; await model.close() }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(ok); done.resume() }
+                lifecycle.requestQuit()
+            }
+            #expect(writes.count == 0 && closes == 1)
+            try await t.workspace.open() // Test inspection, never a Quit recovery action.
+            #expect(t.workspace.snapshot == before)
+            host.invalidate()
+        }
+    }
+
+    @Test func uncertainQuitRetainsUncertaintyAndNeverResubmits() async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            let clock = NativeClock()
+            t.workspace.configureTimer(clock: { clock.read() })
+            let p = try await project(t), id = try await task(t, project: p)
+            host.submitTimer(.start(taskID: id)); await host.drain()
+            let before = try #require(t.workspace.snapshot)
+            let writes = NativeQuitWriteProbe()
+            var closes = 0
+            t.workspace.configureTimer(clock: { 110 }, write: { _, _, _, _, _ in
+                writes.record(); throw LibraryAccessError.publicationIndeterminate
+            })
+            host.submitTimer(.checkpoint); await host.drain()
+            #expect(host.hasUncertainPublication)
+            #expect(t.workspace.snapshot == before)
+            // Phase 7 tests separately cover a later issue replacing uncertainSave.
+            let lifecycle = Lifecycle(host: host)
+            lifecycle.confirmQuit = { #expect(host.hasUncertainPublication); return true }
+            lifecycle.close = { model in
+                closes += 1
+                #expect(model.snapshot == before && model.publicationUncertain)
+                await model.close()
+            }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(ok); done.resume() }
+                lifecycle.requestQuit()
+            }
+            #expect(writes.count == 1 && closes == 1)
+            #expect(host.hasUncertainPublication) // Close is not confirmed inspection/reopen.
+            host.invalidate()
+        }
+    }
+
+    @Test func draftCancelKeepsSuspendedDraftRouteAndWindow() async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            let p = try await project(t), root = try await task(t, project: p)
+            host.track.newTask(projectID: p, parentID: root)
+            guard case .task(var draft) = host.track.sheet else { Issue.record("Missing draft"); return }
+            draft.name = "Unsent child"; host.track.updateTaskDraft(draft)
+            host.track.editConstrainingBudget(taskID: root)
+            let token = host.track.routeToken, sheet = host.track.sheet?.id
+            let before = t.workspace.snapshot
+            var opens = 0, closes = 0
+            host.installSceneActions(workspace: { opens += 1 }, settings: {})
+            let lifecycle = Lifecycle(host: host)
+            lifecycle.confirmQuit = { #expect(!host.track.acceptedWork); return false }
             lifecycle.close = { _ in closes += 1 }
-            lifecycle.willSleep(); await host.drain()
-            lifecycle.didWake(at: Date(timeIntervalSince1970: 110)); await host.drain()
             await withCheckedContinuation { done in
                 lifecycle.reply = { ok in #expect(!ok); done.resume() }
                 lifecycle.requestQuit()
             }
-            #expect(closes == 0); #expect(host.acceptingMutations)
-            #expect(t.workspace.snapshot?.pendingSleepIntervals.isEmpty == false)
-            #expect(lifecycle.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared) == false)
+            #expect(closes == 0 && opens == 0 && host.acceptingMutations)
+            #expect(host.track.routeToken == token && host.track.sheet?.id == sheet)
+            #expect(host.track.suspendedTaskDraft?.name == "Unsent child")
+            #expect(t.workspace.snapshot == before)
             host.invalidate()
         }
+    }
+
+    @Test func failedOwnedStopRequiresAnotherExplicitQuitWithoutReplay() async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            let clock = NativeClock()
+            t.workspace.configureTimer(clock: { clock.read() })
+            let p = try await project(t), id = try await task(t, project: p)
+            host.submitTimer(.start(taskID: id)); await host.drain()
+            let before = t.workspace.snapshot
+            let writes = NativeQuitWriteProbe()
+            var closes = 0, confirms = 0
+            t.workspace.configureTimer(clock: { 110 }, write: { _, _, _, _, _ in
+                writes.record(); throw StorageError.injectedFailure
+            })
+            let lifecycle = Lifecycle(host: host)
+            lifecycle.confirmQuit = { confirms += 1; return true }
+            lifecycle.close = { model in closes += 1; await model.close() }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(!ok); done.resume() }
+                lifecycle.requestQuit()
+            }
+            #expect(writes.count == 1 && closes == 0 && host.acceptingMutations)
+            #expect(t.workspace.snapshot == before)
+            #expect(host.track.failure?.contains("Stop was not confirmed") == true)
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(ok); done.resume() }
+                lifecycle.requestQuit()
+            }
+            #expect(confirms == 2 && writes.count == 1 && closes == 1)
+            try await t.workspace.open()
+            #expect(t.workspace.snapshot == before) // Paused timer left for review, not checkpoint-stopped.
+            host.invalidate()
+        }
+    }
+
+    @Test func lateLifecycleWorkDuringCloseIsNotAcceptedOrReplayed() async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            let gate = NativeSubmissionGate(), lifecycle = Lifecycle(host: host)
+            let before = t.workspace.snapshot
+            var closes = 0, replies = 0
+            lifecycle.close = { model in
+                closes += 1
+                await gate.pause() // Close adapter suspended before even submitting workspace close.
+                #expect(model.snapshot == before && !model.isBusy)
+                await model.close()
+            }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(ok); replies += 1; done.resume() }
+                lifecycle.requestQuit()
+                Task { @MainActor in
+                    await gate.waitForArrival()
+                    lifecycle.willSleep(); lifecycle.didWake(at: Date(timeIntervalSince1970: 120))
+                    lifecycle.checkpointTick(); lifecycle.budgetTick(); lifecycle.requestQuit()
+                    #expect(!host.workspace.isBusy && !host.acceptingMutations)
+                    await gate.release()
+                }
+            }
+            #expect(closes == 1 && replies == 1)
+            host.invalidate()
+        }
+    }
+
+    @Test func sleepAcceptedDuringDrainIsReviewedBeforeConfirmation() async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace), clock = NativeClock()
+            t.workspace.configureTimer(clock: { clock.read() })
+            let p = try await project(t), id = try await task(t, project: p)
+            host.submitTimer(.start(taskID: id)); await host.drain()
+            let gate = NativeSubmissionGate(), lifecycle = Lifecycle(host: host)
+            t.workspace.configureTimer(clock: { clock.read() }, write: { library, command, revision, instant, entry in
+                await gate.pause()
+                return try await library.performTimer(command, expectedRevision: revision, instant: instant, newEntryID: entry)
+            })
+            clock.set(105); host.submitTimer(.checkpoint)
+            await gate.waitForArrival()
+            var closes = 0, replies = 0
+            lifecycle.confirmQuit = {
+                #expect(t.workspace.snapshot?.pendingSleepIntervals.first?.sleepAt == 110)
+                #expect(t.workspace.snapshot?.pendingSleepIntervals.first?.wakeAt == nil)
+                #expect(!t.workspace.isBusy)
+                return false
+            }
+            lifecycle.close = { _ in closes += 1 }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(!ok); replies += 1; done.resume() }
+                lifecycle.requestQuit()
+                clock.set(110); lifecycle.willSleep()
+                Task { await gate.release() }
+            }
+            #expect(closes == 0 && replies == 1 && host.acceptingMutations)
+            #expect(t.workspace.snapshot?.activeTimer == nil)
+            #expect(t.workspace.snapshot?.pendingSleepIntervals.first?.wakeAt == nil)
+            host.invalidate()
+        }
+    }
+
+    @Test func restoredUnownedTimerClosesUnchanged() async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            let p = try await project(t), id = try await task(t, project: p)
+            host.submitTimer(.start(taskID: id)); await host.drain()
+            await t.workspace.close(); try await t.workspace.open()
+            let before = try #require(t.workspace.snapshot)
+            #expect(before.activeTimer != nil && host.track.ownedStop == nil)
+            let writes = NativeQuitWriteProbe()
+            t.workspace.configureTimer(clock: { 999 }, write: { _, _, _, _, _ in
+                writes.record(); throw StorageError.injectedFailure
+            })
+            let lifecycle = Lifecycle(host: host)
+            lifecycle.confirmQuit = { true }
+            lifecycle.close = { model in #expect(model.snapshot == before); await model.close() }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(ok); done.resume() }
+                lifecycle.requestQuit()
+            }
+            #expect(writes.count == 0)
+            try await t.workspace.open()
+            #expect(t.workspace.snapshot == before)
+            host.invalidate()
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func unsentDraftIsNotRemovedBeforeCloseOutcome(closeFails: Bool) async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            let p = try await project(t)
+            host.track.editProject(p)
+            let token = host.track.routeToken, before = t.workspace.snapshot
+            let lifecycle = Lifecycle(host: host)
+            lifecycle.confirmQuit = { #expect(!host.track.acceptedWork); return true }
+            lifecycle.close = { model in
+                #expect(host.track.sheet?.id == p && host.track.routeToken == token)
+                #expect(model.snapshot == before)
+                if closeFails { throw LibraryAccessError.unavailable }
+                await model.close()
+            }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(ok == !closeFails); done.resume() }
+                lifecycle.requestQuit()
+            }
+            #expect(host.track.sheet?.id == p && host.track.routeToken == token)
+            if closeFails {
+                #expect(host.acceptingMutations && t.workspace.snapshot == before)
+            } else {
+                #expect(t.workspace.availability == .closed)
+            }
+            host.invalidate()
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func failedCloseReconcilesPhysicalSleepWithoutReplay(wakeDuringClose: Bool) async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            let clock = NativeClock(), writes = NativeQuitWriteProbe()
+            t.workspace.configureTimer(clock: { clock.read() })
+            let p = try await project(t), id = try await task(t, project: p)
+            host.submitTimer(.start(taskID: id)); await host.drain()
+            clock.set(105)
+            t.workspace.configureTimer(clock: { clock.read() }, write: { _, _, _, _, _ in
+                writes.record(); throw StorageError.injectedFailure
+            })
+            host.submitTimer(.checkpoint); await host.drain()
+            let before = try #require(t.workspace.snapshot)
+            let active = try #require(before.activeTimer)
+            #expect(t.workspace.timerStatus == .paused(entryID: active.entryID))
+            let lifecycle = Lifecycle(host: host), gate = NativeSubmissionGate()
+            var closes = 0, replies = 0
+            lifecycle.confirmQuit = { true }
+            lifecycle.close = { _ in
+                closes += 1
+                await gate.pause()
+                throw LibraryAccessError.unavailable
+            }
+            await withCheckedContinuation { done in
+                lifecycle.reply = { ok in #expect(!ok); replies += 1; done.resume() }
+                lifecycle.requestQuit()
+                Task { @MainActor in
+                    await gate.waitForArrival()
+                    clock.set(110); lifecycle.willSleep()
+                    if wakeDuringClose { lifecycle.didWake(at: Date(timeIntervalSince1970: 120)) }
+                    lifecycle.requestQuit(); lifecycle.checkpointTick(); lifecycle.budgetTick()
+                    #expect(!t.workspace.isBusy && !host.acceptingMutations)
+                    await gate.release()
+                }
+            }
+            #expect(closes == 1 && replies == 1 && writes.count == 1)
+            #expect(host.acceptingMutations && t.workspace.snapshot == before)
+            #expect(host.track.ownedStop == nil)
+            #expect(t.workspace.timerStatus == .reviewRequired)
+            #expect(t.workspace.timerLifecycleGate.state().sleeping == !wakeDuringClose)
+            if !wakeDuringClose {
+                #expect(throws: TimerError.reviewRequired) {
+                    try t.workspace.timerLifecycleGate.sample(clock: { 120 })
+                }
+                lifecycle.didWake(at: Date(timeIntervalSince1970: 120))
+            }
+            #expect(!lifecycle.sleeping && !host.sleeping)
+            #expect(!t.workspace.timerLifecycleGate.state().sleeping)
+            #expect(try t.workspace.timerLifecycleGate.sample(clock: { 120 }).instant == 120)
+            await #expect(throws: TimerError.reviewRequired) {
+                try await t.workspace.enqueueTimer(.checkpoint).value
+            }
+            #expect(writes.count == 1 && t.workspace.snapshot == before)
+            #expect(t.workspace.snapshot?.pendingSleepIntervals.isEmpty == true)
+            #expect(t.workspace.timerStatus == .reviewRequired)
+            host.invalidate()
+        }
+    }
+}
+
+private actor NativeRecoveryProbe {
+    private var openError: (any Error)?
+    private var writeError: (any Error)?
+    private var snapshotError: LibraryAccessError?
+    private var opens = 0
+    private var writes = 0
+
+    init(openError: (any Error)? = nil) { self.openError = openError }
+    func setOpenError(_ error: (any Error)?) { openError = error }
+    func setFailWrite(_ error: any Error = LibraryAccessError.publicationIndeterminate) { writeError = error }
+    func setFailSnapshot(_ fail: Bool, error: LibraryAccessError = .unavailable) {
+        snapshotError = fail ? error : nil
+    }
+    func snapshot(_ library: Library) async throws -> LibrarySnapshot {
+        if let snapshotError { throw snapshotError }
+        return try await library.snapshot()
+    }
+    func counts() -> (opens: Int, writes: Int) { (opens, writes) }
+    func open(_ directory: URL) async throws -> Library {
+        opens += 1
+        if let openError { throw openError }
+        return try await Library.open(at: directory)
+    }
+    func perform(_ library: Library, _ command: WorkspaceCommand, _ revision: Int64) async throws -> LibrarySnapshot {
+        writes += 1
+        if let writeError { throw writeError }
+        return try await library.perform(command, expectedRevision: revision)
+    }
+}
+
+extension NativeHostTests {
+    @Test func recoveryMessagesClassifyTypedIssuesWithoutDurabilityClaims() {
+        let cases: [(WorkspaceIssue, String)] = [
+            (.busy, "Another app or process"),
+            (.unsafeLibrary, "could not be opened safely"),
+            (.invalidStorage, "unsupported format"),
+            (.revisionConflict, "library changed"),
+            (.recoveryRequired, "Time needs review"),
+            (.uncertainSave, "may or may not have been saved"),
+            (.command(.missingRecord), "action could not be completed"),
+            (.validation([Violation(.interval)]), "data that could not be accepted"),
+            (.unavailable, "library is unavailable"),
+            (.closed, "library is unavailable"),
+            (.other("raw diagnostic sentinel"), "action could not be completed")
+        ]
+        for (issue, phrase) in cases {
+            let message = NativeHost.recoveryMessage(issue: issue, availability: .blocked)
+            #expect(message.contains(phrase))
+            #expect(!message.contains("raw diagnostic sentinel"))
+        }
+        let uncertain = NativeHost.recoveryMessage(issue: .uncertainSave, availability: .blocked)
+        #expect(uncertain.contains("Do not repeat it"))
+        #expect(uncertain.contains("or assume it is safe to discard"))
+        #expect(!uncertain.contains("successfully saved"))
+        #expect(NativeHost.recoveryMessage(issue: .validation([Violation(.task)]), availability: .ready)
+            .contains("affected fields"))
+        #expect(NativeHost.recoveryMessage(issue: nil, availability: .opening).contains("Opening"))
+        #expect(NativeHost.recoveryMessage(issue: .busy, availability: .opening).contains("Opening"))
+        #expect(NativeHost.recoveryMessage(issue: nil, availability: .closing).contains("Closing"))
+        #expect(NativeHost.recoveryMessage(issue: nil, availability: .closed).contains("closed"))
+        #expect(NativeHost.recoveryMessage(issue: nil, availability: .blocked).contains("blocked"))
+        #expect(NativeHost.recoveryMessage(issue: nil, availability: .reviewRequired).contains("unbilled"))
+        let stale = NativeHost.recoveryMessage(issue: .revisionConflict, availability: .blocked)
+        #expect(stale.contains("Retained rows may be stale"))
+        #expect(stale.contains("reopen and inspect"))
+        #expect(!stale.contains("current rows"))
+    }
+
+    @Test func openFailuresUseActualDirectoryAndKeepDiagnosticsSeparate() async throws {
+        let failures: [(any Error, WorkspaceIssue)] = [
+            (LibraryOpenError.busy, .busy),
+            (LibraryOpenError.unsafeState("unsafe sentinel"), .unsafeLibrary),
+            (StorageError.invalidStorage("invalid sentinel"), .invalidStorage),
+            (StorageError.unsupportedSchema(999), .invalidStorage),
+            (LibraryError.invalid([Violation(.interval)]), .validation([Violation(.interval)])),
+            (LibraryOpenError.filesystem("filesystem sentinel", 13),
+             .other(String(describing: LibraryOpenError.filesystem("filesystem sentinel", 13))))
+        ]
+        for (error, expected) in failures {
+            let directory = fixtureTemporaryDirectory().appendingPathComponent("RecoveryActual.\(UUID())", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let suite = "NativeRecovery.\(UUID())"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let probe = NativeRecoveryProbe(openError: error)
+            var operations = WorkspaceOperations()
+            operations.open = { try await probe.open($0) }
+            let workspace = WorkspaceModel(directory: directory, operations: operations)
+            let host = NativeHost(directory: directory, workspace: workspace, defaults: defaults)
+            defer { host.invalidate() }
+            #expect(host.canReopen)
+            let _ = WorkspaceView(host: host) { Text("Reports") }
+            host.reopen()
+            #expect(workspace.availability == .opening)
+            #expect(!host.canReopen)
+            host.reopen() // Opening is not another accepted open.
+            await host.drain()
+            #expect(workspace.issue == expected)
+            #expect(workspace.availability == .blocked)
+            #expect(workspace.snapshot == nil)
+            #expect(host.directory == directory)
+            #expect(host.recoveryDiagnostics.contains("Library: \(directory.path)"))
+            #expect(host.recoveryDiagnostics.contains("No confirmed snapshot"))
+            #expect(host.recoveryDiagnostics.contains("Workspace issue:"))
+            #expect(!host.recoveryMessage.contains("sentinel"))
+            #expect(host.canReopen) // A completed lock-busy failure is retryable, not in-flight work.
+            #expect(!workspace.isBusy && host.hasRecoveryFeedback)
+            #expect(host.reopenFailure != nil && host.track.failure == nil)
+            #expect(host.recoveryDiagnostics.contains("Last explicit reopen error (historical):"))
+            for _ in 0..<3 {
+                _ = host.recoveryMessage; _ = host.recoveryDiagnostics
+            }
+            let counts = await probe.counts()
+            #expect(counts.opens == 1 && counts.writes == 0)
+            await workspace.close()
+        }
+    }
+
+    @Test func uncertainWriteAndFailedReopenKeepConfirmedRowsAndNeverReplay() async throws {
+        let directory = fixtureTemporaryDirectory().appendingPathComponent("RecoveryActual.\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "NativeRecovery.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let probe = NativeRecoveryProbe()
+        var operations = WorkspaceOperations()
+        operations.open = { try await probe.open($0) }
+        operations.perform = { try await probe.perform($0, $1, $2) }
+        let workspace = WorkspaceModel(directory: directory, operations: operations)
+        let host = NativeHost(directory: directory, workspace: workspace, defaults: defaults)
+        defer { host.invalidate() }
+        host.reopen(); await host.drain()
+        #expect(host.available && !host.canReopen)
+        let initial = try #require(workspace.snapshot)
+        _ = try await workspace.submit(.createProject(id: UUID(), name: "Confirmed", rate: 100, currency: "EUR"),
+                                       expectedRevision: initial.revision)
+        let before = try #require(workspace.snapshot)
+        await probe.setFailWrite()
+        do {
+            _ = try await workspace.submit(.createProject(id: UUID(), name: "Uncertain", rate: 100, currency: "EUR"),
+                                           expectedRevision: before.revision)
+            Issue.record("Expected uncertain publication")
+        } catch {
+            #expect((error as? LibraryAccessError) == .publicationIndeterminate)
+        }
+        #expect(workspace.issue == .uncertainSave)
+        #expect(workspace.availability == .blocked)
+        #expect(workspace.snapshot == before)
+        #expect(host.recoveryDiagnostics.contains("Last confirmed revision: \(before.revision)"))
+        #expect(host.recoveryMessage.contains("may or may not"))
+        #expect(workspace.publicationUncertain && host.hasUncertainPublication) // Latched at issue assignment, not reopen.
+        var counts = await probe.counts()
+        #expect(counts.opens == 1 && counts.writes == 2)
+        await probe.setOpenError(LibraryOpenError.busy)
+        host.reopen()
+        #expect(workspace.availability == .opening && !host.canReopen)
+        #expect(host.hasUncertainPublication && host.recoveryMessage.contains("Do not repeat it"))
+        host.reopen(); await host.drain()
+        #expect(workspace.issue == .busy)
+        #expect(workspace.availability == .blocked)
+        #expect(workspace.snapshot == before)
+        #expect(host.reopenFailure != nil && host.track.failure == nil)
+        #expect(host.hasUncertainPublication && host.hasRecoveryFeedback && host.canReopen)
+        #expect(host.recoveryMessage.contains("may or may not have been saved"))
+        #expect(host.recoveryMessage.contains("Do not repeat it"))
+        #expect(host.recoveryMessage.contains("or assume it is safe to discard"))
+        #expect(host.recoveryDiagnostics.contains("Unresolved publication uncertainty:"))
+        #expect(host.recoveryDiagnostics.contains("Last explicit reopen error (historical):"))
+        counts = await probe.counts()
+        #expect(counts.opens == 2 && counts.writes == 2)
+        for _ in 0..<5 { _ = host.recoveryMessage; _ = host.recoveryDiagnostics }
+        counts = await probe.counts()
+        #expect(counts.opens == 2 && counts.writes == 2)
+        await probe.setOpenError(nil)
+        host.track.failure = "Unsent draft error sentinel"
+        host.reopen()
+        #expect(host.hasUncertainPublication && host.recoveryMessage.contains("Do not repeat it"))
+        await host.drain()
+        #expect(host.available && !host.canReopen)
+        #expect(workspace.issue == nil)
+        #expect(!host.hasUncertainPublication && host.reopenFailure == nil)
+        #expect(!host.recoveryMessage.contains("may or may not"))
+        #expect(!host.recoveryDiagnostics.contains("Last explicit reopen error"))
+        #expect(host.track.failure == "Unsent draft error sentinel")
+        #expect(host.recoveryDiagnostics.contains("Last editor/action error (historical; inspect the affected draft):"))
+        #expect(host.recoveryMessage.contains("historical feedback"))
+        host.track.failure = nil // Test-only cleanup; production reopen must not clear another error.
+        #expect(!host.hasRecoveryFeedback)
+        #expect(workspace.snapshot == before)
+        counts = await probe.counts()
+        #expect(counts.opens == 3 && counts.writes == 2)
+        // A healthy workspace cannot be reopened through this recovery action either.
+        host.reopen(); await host.drain()
+        counts = await probe.counts()
+        #expect(counts.opens == 3 && counts.writes == 2)
+        await workspace.close()
+        #expect(host.canReopen)
+        let token = try #require(host.beginQuit())
+        #expect(!host.canReopen)
+        host.reopen(); await host.drain()
+        counts = await probe.counts()
+        #expect(counts.opens == 3 && counts.writes == 2)
+        host.finishQuit(token, cancelled: true)
+        #expect(host.canReopen)
+    }
+
+    @Test(arguments: [false, true])
+    func acceptedSuccessorCannotEraseUncertaintyBeforeHostReopen(storageFailure: Bool) async throws {
+        let directory = fixtureTemporaryDirectory().appendingPathComponent("RecoveryQueued.\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "NativeRecovery.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let probe = NativeRecoveryProbe()
+        var operations = WorkspaceOperations()
+        operations.open = { try await probe.open($0) }
+        operations.perform = { try await probe.perform($0, $1, $2) }
+        let workspace = WorkspaceModel(directory: directory, operations: operations)
+        let host = NativeHost(directory: directory, workspace: workspace, defaults: defaults)
+        defer { host.invalidate() }
+        host.reopen(); await host.drain()
+        let before = try #require(workspace.snapshot)
+        #expect(!workspace.publicationUncertain && !host.hasUncertainPublication)
+        if storageFailure { await probe.setFailWrite(StorageError.commitIndeterminate) }
+        else { await probe.setFailWrite() }
+        // Both accepted on MainActor without a suspension: the successor runs in the real FIFO.
+        let uncertain = workspace.enqueueSubmit(
+            .createProject(id: UUID(), name: "Unknown", rate: 1, currency: "EUR"),
+            expectedRevision: before.revision)
+        let successor = workspace.enqueueSubmit(
+            .createProject(id: UUID(), name: "Must not write", rate: 1, currency: "EUR"),
+            expectedRevision: before.revision)
+        #expect(workspace.isBusy)
+        do {
+            _ = try await uncertain.value
+            Issue.record("Expected uncertain publication")
+        } catch {
+            if storageFailure { #expect((error as? StorageError) == .commitIndeterminate) }
+            else { #expect((error as? LibraryAccessError) == .publicationIndeterminate) }
+        }
+        do {
+            _ = try await successor.value
+            Issue.record("Expected queued successor to fail before its writer")
+        } catch { #expect((error as? LibraryAccessError) == .unavailable) }
+        // No host.reopen has occurred since the uncertain write. Its old capture-only latch would miss this.
+        #expect(workspace.issue == .unavailable && workspace.availability == .blocked)
+        #expect(workspace.snapshot == before && !workspace.isBusy)
+        #expect(workspace.publicationUncertain && host.hasUncertainPublication)
+        #expect(host.recoveryMessage.contains("Do not repeat it"))
+        var counts = await probe.counts()
+        #expect(counts.opens == 1 && counts.writes == 1)
+        await probe.setOpenError(LibraryOpenError.busy)
+        host.reopen()
+        #expect(workspace.publicationUncertain && host.hasUncertainPublication)
+        await host.drain()
+        #expect(workspace.issue == .busy && workspace.snapshot == before)
+        #expect(workspace.publicationUncertain && host.hasUncertainPublication)
+        #expect(host.reopenFailure != nil && host.canReopen)
+        #expect(host.recoveryMessage.contains("or assume it is safe to discard"))
+        counts = await probe.counts()
+        #expect(counts.opens == 2 && counts.writes == 1)
+        await workspace.close()
+        #expect(workspace.issue == nil && workspace.snapshot == nil)
+        #expect(workspace.publicationUncertain && host.hasUncertainPublication) // Shutdown is not confirmation.
+        await probe.setOpenError(nil)
+        host.reopen()
+        #expect(workspace.publicationUncertain && host.hasUncertainPublication)
+        await host.drain()
+        #expect(host.available && workspace.snapshot == before && workspace.issue == nil)
+        #expect(!workspace.publicationUncertain && !host.hasUncertainPublication)
+        #expect(host.reopenFailure == nil)
+        counts = await probe.counts()
+        #expect(counts.opens == 3 && counts.writes == 1) // Inspection never replays either queued mutation.
+        await workspace.close()
+    }
+
+    @Test func confirmedOpenCannotClearUncertaintyAcrossAcceptedClose() async throws {
+        let directory = fixtureTemporaryDirectory().appendingPathComponent("RecoveryClosing.\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "NativeRecovery.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let probe = NativeRecoveryProbe(openError: LibraryAccessError.publicationIndeterminate)
+        let openingGate = NativeSubmissionGate(), closingGate = NativeSubmissionGate()
+        var operations = WorkspaceOperations()
+        operations.open = { try await probe.open($0) }
+        operations.settings = { library in
+            await openingGate.pause()
+            return try await library.settings()
+        }
+        operations.close = { library in
+            await closingGate.pause()
+            await library.close()
+        }
+        let workspace = WorkspaceModel(directory: directory, operations: operations)
+        let host = NativeHost(directory: directory, workspace: workspace, defaults: defaults)
+        defer { host.invalidate() }
+        host.reopen(); await host.drain()
+        #expect(workspace.availability == .blocked && workspace.snapshot == nil)
+        #expect(workspace.publicationUncertain && host.hasUncertainPublication)
+        await probe.setOpenError(nil)
+        let opening = workspace.enqueueOpen()
+        let openingCompletion = Task { @MainActor in
+            do { try await opening.value }
+            catch {
+                // Surface setup failures even when open never reaches the settings gate.
+                await openingGate.pause()
+                throw error
+            }
+        }
+        await openingGate.waitForArrival()
+        let closing = workspace.enqueueClose() // Accepted while the real open is suspended.
+        #expect(workspace.availability == .closing && !host.canReopen)
+        await openingGate.release()
+        try await openingCompletion.value
+        await closingGate.waitForArrival() // Keep confirmed open rows visible while close is in flight.
+        #expect(workspace.snapshot != nil && workspace.issue == nil)
+        #expect(workspace.availability == .closing)
+        #expect(workspace.publicationUncertain && host.hasUncertainPublication)
+        #expect(host.recoveryMessage.contains("Do not repeat it"))
+        await closingGate.release()
+        await closing.value
+        #expect(workspace.availability == .closed && workspace.snapshot == nil)
+        #expect(workspace.publicationUncertain && host.hasUncertainPublication)
+        let counts = await probe.counts()
+        #expect(counts.opens == 2 && counts.writes == 0)
+    }
+
+    @Test(arguments: [LibraryAccessError.unavailable, .publicationIndeterminate])
+    func failedConflictRefreshIsStaleAndIssueFreeReviewStillHasFeedback(refreshError: LibraryAccessError) async throws {
+        let directory = fixtureTemporaryDirectory().appendingPathComponent("RecoveryActual.\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "NativeRecovery.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let probe = NativeRecoveryProbe()
+        var operations = WorkspaceOperations()
+        operations.open = { try await probe.open($0) }
+        operations.snapshot = { try await probe.snapshot($0) }
+        let workspace = WorkspaceModel(directory: directory, operations: operations)
+        let host = NativeHost(directory: directory, workspace: workspace, defaults: defaults)
+        defer { host.invalidate() }
+        host.reopen(); await host.drain()
+        let p = try await project(host.track), id = try await task(host.track, project: p)
+        workspace.configureTimer(clock: { 100 })
+        host.submitTimer(.start(taskID: id)); await host.drain()
+        let before = try #require(workspace.snapshot)
+        await probe.setFailSnapshot(true, error: refreshError)
+        workspace.configureTimer(clock: { 110 }, write: { _, _, revision, _, _ in
+            throw StorageError.revisionConflict(expected: revision, actual: revision + 1)
+        })
+        let conflict = StorageError.revisionConflict(expected: before.revision, actual: before.revision + 1)
+        await #expect(throws: conflict) { try await workspace.enqueueTimer(.checkpoint).value }
+        #expect(workspace.availability == .blocked)
+        #expect(workspace.issue == (refreshError == .publicationIndeterminate ? .uncertainSave : .unavailable))
+        #expect(workspace.snapshot == before && host.hasRecoveryFeedback)
+        #expect(workspace.publicationUncertain == (refreshError == .publicationIndeterminate))
+        #expect(host.hasUncertainPublication == (refreshError == .publicationIndeterminate))
+        if refreshError == .publicationIndeterminate {
+            #expect(host.recoveryMessage.contains("Do not repeat it"))
+        } else {
+            #expect(host.recoveryMessage.contains("reopen and inspect"))
+        }
+        #expect(!host.recoveryMessage.contains("current rows"))
+        await probe.setFailSnapshot(false)
+        host.reopen(); await host.drain()
+        #expect(workspace.availability == .reviewRequired && workspace.issue == nil)
+        #expect(host.available && !host.canReopen)
+        #expect(!workspace.publicationUncertain && !host.hasUncertainPublication)
+        #expect(host.track.failure == nil && host.reopenFailure == nil)
+        #expect(host.hasRecoveryFeedback) // Real helper must expose Review time even with no issue/error.
+        #expect(host.recoveryMessage.contains("Time needs review"))
+        #expect(host.recoveryMessage.contains("unbilled"))
+        let counts = await probe.counts()
+        #expect(counts.opens == 2 && counts.writes == 0)
+        await workspace.close()
     }
 }

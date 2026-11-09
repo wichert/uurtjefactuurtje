@@ -138,3 +138,20 @@ public enum NameKey {
             .precomposedStringWithCanonicalMapping
     }
 }
+
+extension LibrarySnapshot {
+    /// Editor review ignores checkpoint bookkeeping, never a changed record or timer identity.
+    public func editorRelevantEquals(_ other: LibrarySnapshot) -> Bool {
+        func reviewed(_ value: LibrarySnapshot) -> LibrarySnapshot {
+            LibrarySnapshot(schemaVersion: value.schemaVersion, revision: 0,
+                projects: value.projects,
+                tasks: value.tasks.map {
+                    TaskRecord(id: $0.id, projectID: $0.projectID, parentTaskID: $0.parentTaskID,
+                               name: $0.name, budgetSeconds: $0.budgetSeconds, lastWarnedThreshold: .none)
+                }, entries: value.entries,
+                activeTimer: value.activeTimer.map { ActiveTimer(entryID: $0.entryID, checkpointAt: 0) },
+                pendingSleepIntervals: value.pendingSleepIntervals)
+        }
+        return reviewed(self) == reviewed(other)
+    }
+}

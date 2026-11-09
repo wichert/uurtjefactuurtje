@@ -5,12 +5,14 @@ import AppKit
     @NSApplicationDelegateAdaptor(Lifecycle.self) private var delegate
     var body: some Scene {
         Window("UurtjeFactuurtje", id: "workspace") {
-            WorkspaceView(presentation: delegate.host.track) { ReportsView(presentation: delegate.host.track) }
+            WorkspaceView(host: delegate.host) { ReportsView(presentation: delegate.host.track) }
                 .disabled(delegate.host.quitAttempt != nil)
+                .frame(minWidth: 720, minHeight: 450)
                 .overlay {
                     if delegate.host.quitAttempt != nil { ProgressView("Finishing accepted work before quitting…").padding().background(.regularMaterial) }
                 }
         }
+        .defaultSize(width: 900, height: 600)
         .commands { NativeCommands(host: delegate.host) }
         Settings {
             SettingsView(host: delegate.host).disabled(delegate.host.quitAttempt != nil)

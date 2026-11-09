@@ -12,11 +12,48 @@ import LibraryStore
     private(set) var sleeping = false
     private var menu: MenuBarController?
     private var notifications: BudgetNotifications?
-    var confirmQuit: () async -> Bool = {
+    private var closingResources = false
+    private var droppedCloseObservation = false
+    private var reviewAfterClose = false
+    lazy var confirmQuit: () async -> Bool = { @MainActor [weak self] in
+        guard let self else { return false }
+        let host = self.host
+        let snapshot = host.workspace.snapshot
+        let uncertain = host.hasUncertainPublication
+        let unavailable = !host.available || snapshot == nil
+        let running: Bool
+        if case .running = host.workspace.timerStatus {
+            running = !self.sleeping && !host.sleeping && host.track.ownedStop != nil
+        } else { running = false }
+        let draft: Bool
+        if !host.track.acceptedWork {
+            switch host.track.sheet {
+            case .project, .task, .correction: draft = true
+            default: draft = host.track.suspendedTaskDraft != nil
+            }
+        } else { draft = false }
+        var details: [String] = []
+        if uncertain {
+            details.append("The last change may or may not have been saved. Quit will close the library without another write. On next launch, inspect entries and the timer before deciding on another action; do not repeat the uncertain change.")
+        } else if unavailable {
+            details.append("The library is unavailable. Quit will close its resources without another write. No additional save or Stop is confirmed; inspect the library when it can be opened again.")
+        } else if running {
+            details.append("Your running timer will be stopped once before closing the library.")
+        } else if snapshot?.activeTimer != nil || self.sleeping || host.sleeping {
+            details.append("Interrupted or sleeping tracking will be left unchanged for review on next launch. Quit will not invent an end or wake time.")
+        }
+        if !uncertain && !unavailable && snapshot?.pendingSleepIntervals.isEmpty == false {
+            details.append("Saved pending sleep time will remain unbilled. Defer its review until next launch; Quit will not include or discard it.")
+        }
+        if draft {
+            details.append("The open unsent editor draft, including any suspended task draft, will be discarded only if Quit succeeds. Cancel keeps the draft and window open. Accepted operations are not discarded.")
+        }
         let alert = NSAlert()
-        alert.messageText = "Quitting will stop time tracking"
-        alert.informativeText = "Pending or interrupted time must be reviewed before quitting."
-        alert.addButton(withTitle: "Stop & Quit"); alert.addButton(withTitle: "Cancel")
+        alert.messageText = draft ? "Discard unsent draft and quit?" : "Quit UurtjeFactuurtje?"
+        alert.informativeText = details.joined(separator: "\n\n")
+        alert.addButton(withTitle: draft ? "Discard Draft & Quit" :
+            (running && !uncertain && !unavailable ? "Stop & Quit" : "Quit"))
+        alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
     }
     var reply: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
@@ -75,6 +112,7 @@ import LibraryStore
         host.sleeping = true
         let generation = host.workspace.timerLifecycleGate.latchSleep()
         sleepGeneration = generation
+        guard !closingResources else { droppedCloseObservation = true; return }
         host.retain(host.workspace.enqueueSleepObservation(generation: generation))
         menu?.refresh(at: Date())
     }
@@ -86,6 +124,18 @@ import LibraryStore
     func didWake(at date: Date) {
         sleeping = false
         host.sleeping = false
+        guard !closingResources else {
+            droppedCloseObservation = true
+            sleepGeneration = nil
+            return
+        }
+        if reviewAfterClose {
+            reviewAfterClose = false
+            sleepGeneration = nil
+            host.workspace.requireTimerReviewAfterClose(sleeping: false)
+            menu?.refresh(at: date)
+            return
+        }
         if let generation = sleepGeneration, let instant = Self.wholeSecond(date) {
             sleepGeneration = nil
             host.retain(host.workspace.enqueueWakeObservation(generation: generation, observedAt: instant))
@@ -100,38 +150,73 @@ import LibraryStore
         guard let token = host.beginQuit() else { return }
         Task { @MainActor in
             var permitted = false
-            defer { host.finishQuit(token, cancelled: !permitted); reply(permitted) }
+            defer {
+                if !permitted { closingResources = false }
+                host.finishQuit(token, cancelled: !permitted)
+                reply(permitted)
+            }
             await host.drain()
-            guard !host.track.acceptedWork else { host.track.failure = "Finish the accepted editor operation before quitting."; return }
-            if host.track.sheet != nil || host.workspace.snapshot?.activeTimer != nil {
+            guard !host.track.acceptedWork else {
+                host.track.failure = "Finish the accepted editor operation before quitting. It has not been discarded."
+                return
+            }
+            let reviewed = host.workspace.snapshot
+            let availability = host.workspace.availability
+            let uncertain = host.hasUncertainPublication
+            let generation = host.workspace.timerLifecycleGate.currentGeneration
+            let wasSleeping = sleeping || host.sleeping
+            let needsConfirmation = host.track.sheet != nil || host.track.suspendedTaskDraft != nil
+                || reviewed?.activeTimer != nil || reviewed?.pendingSleepIntervals.isEmpty == false
+                || !host.available || reviewed == nil || uncertain || wasSleeping
+            if needsConfirmation {
                 guard await confirmQuit() else { return }
             }
-            // Confirmation may run a nested run loop; drain sleep/wake observations again.
             await host.drain()
-            guard host.available, let snapshot = host.workspace.snapshot,
-                  snapshot.pendingSleepIntervals.isEmpty, !sleeping else {
-                host.track.failure = "Review unresolved time or reopen the library before quitting."
-                host.openTrack(); return
+            // Consent cannot authorize new rows, a new sleep generation or a newly unknown save.
+            guard !host.track.acceptedWork, host.workspace.snapshot == reviewed,
+                  host.workspace.availability == availability,
+                  host.hasUncertainPublication == uncertain,
+                  host.workspace.timerLifecycleGate.currentGeneration == generation,
+                  (sleeping || host.sleeping) == wasSleeping else {
+                host.track.failure = "Time or library state changed during Quit. Inspect it, then choose Quit again. No Stop was repeated."
+                return
             }
-            if snapshot.activeTimer != nil {
+            if !uncertain, host.available, !wasSleeping,
+               case .running = host.workspace.timerStatus {
                 guard let stop = host.track.ownedStop else {
-                    host.track.failure = "Review the interrupted timer before quitting."; host.openReview(); return
+                    host.track.failure = "The running timer could not be safely identified. Inspect it before trying Quit again."
+                    return
                 }
                 let result = host.workspace.enqueueTimer(stop)
                 do { _ = try await result.value }
-                catch { host.track.failure = "Stop was not confirmed: \(error)"; return }
+                catch {
+                    host.track.failure = "Stop was not confirmed. Quit was cancelled; no Stop was repeated. Inspect the timer and library feedback. Choose Quit again only if you want to close in the state then shown. Details: \(error)"
+                    return
+                }
+                await host.drain()
+                guard !host.track.acceptedWork, host.available, !host.hasUncertainPublication,
+                      !sleeping, !host.sleeping,
+                      host.workspace.timerLifecycleGate.currentGeneration == generation,
+                      host.workspace.snapshot?.activeTimer == nil,
+                      host.workspace.snapshot?.pendingSleepIntervals == reviewed?.pendingSleepIntervals else {
+                    host.track.failure = "Time or library state changed while stopping. Inspect it before choosing Quit again; no Stop was repeated."
+                    return
+                }
             }
-            await host.drain()
-            guard host.available, !sleeping, host.workspace.snapshot?.activeTimer == nil,
-                  host.workspace.snapshot?.pendingSleepIntervals.isEmpty == true else {
-                host.track.failure = "Time changed during quit; review before trying again."; return
-            }
+            // No actor suspension between this seal and submitting resource close.
+            droppedCloseObservation = false
+            closingResources = true
             do {
                 try await close(host.workspace)
                 guard host.workspace.availability == .closed else { throw LibraryAccessError.unavailable }
                 permitted = true
             } catch {
-                host.track.failure = "Close failed. Reopen and inspect; no Stop or write was replayed. \(error)"
+                // Reconcile before finishQuit releases admission, without replaying observations.
+                if droppedCloseObservation {
+                    reviewAfterClose = sleeping || host.sleeping
+                    host.workspace.requireTimerReviewAfterClose(sleeping: reviewAfterClose)
+                }
+                host.track.failure = "Close failed. Reopen and inspect; interrupted tracking requires review. No Stop or write was replayed. \(error)"
                 host.openTrack()
             }
         }

@@ -31,6 +31,16 @@ struct ProjectDraft: Identifiable {
     var currencyCode: String
     var confirmedPreviousCurrency: String?
     var archiveConfirmed: Bool
+    var reviewedSnapshot: LibrarySnapshot? = nil
+    func inputError(in snapshot: LibrarySnapshot) -> String? {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return "Enter a project name." }
+        if name.contains("\0") { return "Remove the null character from the project name." }
+        if !isNew && !snapshot.projects.contains(where: { $0.id == id }) { return "This project no longer exists." }
+        if RateInput.parse(rateText) == nil { return "Enter a nonnegative decimal rate without grouping separators." }
+        if !Locale.commonISOCurrencyCodes.contains(currencyCode) { return "Enter an uppercase ISO currency code, for example EUR or USD." }
+        return nil
+    }
 }
 struct TaskDraft: Identifiable {
     let id: UUID
@@ -44,9 +54,23 @@ struct TaskDraft: Identifiable {
     var budgetHours: String
     let originalBudgetSeconds: Int64?
     let originalBudgetText: String
+    var reviewedSnapshot: LibrarySnapshot? = nil
     var parsedBudget: Int64? {
         guard budgetEnabled else { return nil }
         return budgetHours == originalBudgetText ? originalBudgetSeconds : BudgetInput.parseHours(budgetHours)
+    }
+    func inputError(in snapshot: LibrarySnapshot) -> String? {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return "Enter a task name." }
+        if name.contains("\0") { return "Remove the null character from the task name." }
+        let existing = snapshot.tasks.first { $0.id == id }
+        if !isNew && existing == nil { return "This task no longer exists." }
+        let project = isNew ? projectID : existing!.projectID
+        let parent = isNew ? parentID : existing!.parentTaskID
+        if snapshot.tasks.contains(where: {
+            $0.id != id && $0.projectID == project && $0.parentTaskID == parent && NameKey.make($0.name) == NameKey.make(name)
+        }) { return "A task with this name already exists under this parent. Choose a different name." }
+        return nil
     }
     mutating func relocate(projectID: UUID, parentID: UUID?) {
         if self.projectID != projectID || self.parentID != parentID { migrationAccepted = false }
@@ -175,6 +199,14 @@ enum EditorError: Error, LocalizedError {
         }
         reveal = TaskReveal(id: UUID(), taskID: id)
     }
+    func consumeReveal() -> TaskReveal? {
+        guard sheet == nil, destination == .track, let request = reveal,
+              let projectID = selectedProjectID,
+              projects.contains(where: { $0.id == projectID }),
+              rows(projectID: projectID).contains(where: { $0.id == request.taskID }) else { return nil }
+        reveal = nil
+        return request
+    }
     private func present(_ route: TrackSheet) {
         guard sheet == nil, !acceptedWork else { feedback = "Finish or cancel the current editor first."; return }
         routeToken = UUID(); sheet = route
@@ -185,23 +217,25 @@ enum EditorError: Error, LocalizedError {
         if id != nil && p == nil { failure = "Project no longer exists."; return }
         present(.project(ProjectDraft(id: p?.id ?? UUID(), isNew: p == nil, observedRevision: s.revision,
             name: p?.name ?? "", rateText: p.map { RateInput.text($0.hourlyRate) } ?? "0",
-            currencyCode: p?.currencyCode ?? "EUR", confirmedPreviousCurrency: nil, archiveConfirmed: false)))
+            currencyCode: p?.currencyCode ?? "EUR", confirmedPreviousCurrency: nil, archiveConfirmed: false,
+            reviewedSnapshot: s)))
     }
     func newTask(projectID: UUID, parentID: UUID? = nil) {
         guard let s = workspace.snapshot else { return }
         present(.task(TaskDraft(id: UUID(), isNew: true, observedRevision: s.revision, projectID: projectID,
             parentID: parentID, name: "", migrationAccepted: false, budgetEnabled: false, budgetHours: "",
-            originalBudgetSeconds: nil, originalBudgetText: "")))
+            originalBudgetSeconds: nil, originalBudgetText: "", reviewedSnapshot: s)))
     }
     func editTask(_ id: UUID) {
         guard let s = workspace.snapshot, let t = s.tasks.first(where: { $0.id == id }) else { return }
-        present(.task(taskDraft(t, revision: s.revision)))
+        present(.task(taskDraft(t, snapshot: s)))
     }
-    private func taskDraft(_ t: TaskRecord, revision: Int64) -> TaskDraft {
+    private func taskDraft(_ t: TaskRecord, snapshot s: LibrarySnapshot) -> TaskDraft {
         let text = t.budgetSeconds.map { BudgetInput.text($0) } ?? ""
-        return TaskDraft(id: t.id, isNew: false, observedRevision: revision, projectID: t.projectID,
+        return TaskDraft(id: t.id, isNew: false, observedRevision: s.revision, projectID: t.projectID,
             parentID: t.parentTaskID, name: t.name, migrationAccepted: false, budgetEnabled: t.budgetSeconds != nil,
-            budgetHours: text, originalBudgetSeconds: t.budgetSeconds, originalBudgetText: text)
+            budgetHours: text, originalBudgetSeconds: t.budgetSeconds, originalBudgetText: text,
+            reviewedSnapshot: s)
     }
     func addTime(taskID: UUID? = nil) { present(.correction(CorrectionRoute(id: UUID(), mode: .add(taskID: taskID)))) }
     func editTime(entryID: UUID) {
@@ -217,7 +251,7 @@ enum EditorError: Error, LocalizedError {
     func editConstrainingBudget(taskID: UUID) {
         guard case .task(let draft) = sheet, suspendedTaskDraft == nil, !acceptedWork,
               let s = workspace.snapshot, let ancestor = s.tasks.first(where: { $0.id == taskID }), ancestor.id != draft.id else { return }
-        suspendedTaskDraft = draft; sheet = .task(taskDraft(ancestor, revision: s.revision)); routeToken = UUID()
+        suspendedTaskDraft = draft; sheet = .task(taskDraft(ancestor, snapshot: s)); routeToken = UUID()
     }
     func cancelSheet() {
         guard !acceptedWork else { return }
@@ -233,7 +267,27 @@ enum EditorError: Error, LocalizedError {
         guard token == routeToken else { return }
         acceptedWork = false
         if let error { failure = String(describing: error); return }
-        cancelSheet(); reconcile()
+        let completed = sheet
+        let restoringChild = suspendedTaskDraft != nil
+        cancelSheet()
+        reconcile()
+        guard !restoringChild else { return }
+        switch completed {
+        case .project(let draft) where draft.isNew:
+            guard let snapshot = workspace.snapshot,
+                  let project = snapshot.projects.first(where: { $0.id == draft.id }) else { return }
+            destination = .track
+            search = ""
+            selectedProjectID = project.id
+            selectedTaskID = nil
+            reveal = nil
+            if project.isArchived { showArchived = true }
+            if snapshot.projects.count == 1 { newTask(projectID: project.id) }
+        case .task(let draft) where draft.isNew:
+            guard workspace.snapshot?.tasks.contains(where: { $0.id == draft.id }) == true else { return }
+            revealTask(draft.id)
+        default: break
+        }
     }
     func completeReview(_ token: UUID) {
         guard token == routeToken else { return }

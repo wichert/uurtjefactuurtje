@@ -230,3 +230,110 @@ import LibraryStore
         }
     }
 }
+
+extension ReportsPresentationTests {
+    @Test func compactBudgetHoursAreLocalizedAndMarkRounding() {
+        let en = Locale(identifier: "en_US_POSIX"), nl = Locale(identifier: "nl_NL")
+        #expect(ReportFormatting.budgetHours(seconds: 0, locale: en) == "0 h")
+        #expect(ReportFormatting.budgetHours(seconds: 1, locale: en) == "<0.01 h")
+        #expect(ReportFormatting.budgetHours(seconds: 18, locale: en) == "≈0.01 h")
+        #expect(ReportFormatting.budgetHours(seconds: 36, locale: en) == "0.01 h")
+        #expect(ReportFormatting.budgetHours(seconds: 3599, locale: en) == "≈1 h")
+        #expect(ReportFormatting.budgetHours(seconds: 3600, locale: en) == "1 h")
+        #expect(ReportFormatting.budgetHours(seconds: 3601, locale: en) == "≈1 h")
+        #expect(ReportFormatting.budgetHours(seconds: 4500, locale: nl) == "1,25 h")
+        #expect(ReportFormatting.budgetHours(seconds: 1, locale: nl) == "<0,01 h")
+        #expect(ReportFormatting.duration(seconds: 3661) == "1 h 1 min 1 sec (3661 seconds)")
+    }
+
+    @Test func compactBudgetStatesUseExactSecondsNotRoundedHours() {
+        let locale = Locale(identifier: "en_US_POSIX")
+        #expect(ReportFormatting.budgetBalance(used: 3599, budget: 3600, locale: locale) == "<0.01 h remaining")
+        #expect(ReportFormatting.budgetBalance(used: 3600, budget: 3600, locale: locale) == "Budget reached")
+        #expect(ReportFormatting.budgetBalance(used: 3601, budget: 3600, locale: locale) == "<0.01 h overrun")
+        for (used, band) in [(Decimal(2879), WarningThreshold.none), (2880, .eighty), (3599, .eighty), (3600, .hundred), (3601, .hundred)] {
+            #expect(BudgetRules.band(used: used, budget: 3600) == band)
+        }
+        let max = Decimal(Int64.max)
+        #expect(ReportFormatting.budgetHours(seconds: max, locale: locale) == "≈2562047788015215.5 h")
+        #expect(ReportFormatting.budgetHours(seconds: max * 2, locale: locale) == "≈5124095576030431 h")
+        #expect(ReportFormatting.budgetBalance(used: max + 1, budget: .max, locale: locale) == "<0.01 h overrun")
+        #expect(ReportFormatting.budgetBalance(used: max - 1, budget: .max, locale: locale) == "<0.01 h remaining")
+        #expect(ReportFormatting.budgetAllocation(allocated: max * 2, budget: .max, locale: locale)
+            == "Allocated ≈5124095576030431 h / ≈2562047788015215.5 h; ≈2562047788015215.5 h overallocated")
+    }
+
+    @Test func compactAllocationsKeepNearestFrontierAndLargeDecimalTotals() throws {
+        let projectID = UUID(), root = UUID(), bridge = UUID(), child = UUID(), grandchild = UUID(), sibling = UUID()
+        func snapshot(_ limit: Int64, _ first: Int64, _ second: Int64) -> LibrarySnapshot {
+            LibrarySnapshot(schemaVersion: 1, revision: 0,
+                projects: [Project(id: projectID, name: "Client", hourlyRate: 60, currencyCode: "EUR")],
+                tasks: [
+                    TaskRecord(id: root, projectID: projectID, name: "Root", budgetSeconds: limit),
+                    TaskRecord(id: bridge, projectID: projectID, parentTaskID: root, name: "Bridge"),
+                    TaskRecord(id: child, projectID: projectID, parentTaskID: bridge, name: "Child", budgetSeconds: first),
+                    TaskRecord(id: grandchild, projectID: projectID, parentTaskID: child, name: "Grandchild", budgetSeconds: 1),
+                    TaskRecord(id: sibling, projectID: projectID, parentTaskID: root, name: "Sibling", budgetSeconds: second)
+                ], entries: [], activeTimer: nil, pendingSleepIntervals: [])
+        }
+        let locale = Locale(identifier: "en_US_POSIX")
+        let exact = try BudgetRules.allocations(in: snapshot(3600, 1800, 1800))
+        let allocation = try #require(exact.first { $0.taskID == root })
+        #expect(allocation.allocatedSeconds == 3600, "Do not double-count the grandchild through its budgeted parent")
+        #expect(ReportFormatting.budgetAllocation(allocated: allocation.allocatedSeconds, budget: allocation.limitSeconds, locale: locale)
+            == "Allocated 1 h / 1 h; 0 h unallocated")
+        let nearly = try BudgetRules.allocations(in: snapshot(3600, 1800, 1799))
+        let near = try #require(nearly.first { $0.taskID == root })
+        #expect(ReportFormatting.budgetAllocation(allocated: near.allocatedSeconds, budget: near.limitSeconds, locale: locale)
+            == "Allocated ≈1 h / 1 h; <0.01 h unallocated")
+        let excessive = snapshot(.max, .max, .max)
+        let huge = try #require(try BudgetRules.allocations(in: excessive).first { $0.taskID == root })
+        #expect(huge.allocatedSeconds == Decimal(Int64.max) * 2)
+        #expect(SnapshotValidator.violations(in: excessive).contains { $0.code == .allocation && $0.recordID == root })
+        #expect(ReportFormatting.budgetAllocation(allocated: huge.allocatedSeconds, budget: huge.limitSeconds, locale: locale).hasSuffix("overallocated"))
+    }
+
+    @Test func budgetDisplayDoesNotChangeMixedCurrencyReportsOrWrite() async throws {
+        try await withReports { workspace, _, reports in
+            let euro = try await addProject(workspace, "Euro", currency: "EUR")
+            let yen = try await addProject(workspace, "Yen", currency: "JPY")
+            let euroTask = try await addTask(workspace, projectID: euro, name: "Euro work")
+            let yenTask = try await addTask(workspace, projectID: yen, name: "Yen work")
+            for (taskID, start, end) in [(euroTask, Int64(1_704_067_200), Int64(1_704_070_800)),
+                                         (yenTask, Int64(1_704_070_800), Int64(1_704_074_400))] {
+                let preview = try CorrectionPlanner.preview(.add(id: UUID(), taskID: taskID, startAt: start, endAt: end),
+                                                             in: #require(workspace.snapshot))
+                _ = try await workspace.enqueueCorrection(.apply(preview)).value
+                _ = try await workspace.submit(.editTask(id: taskID, name: taskID == euroTask ? "Euro work" : "Yen work", budgetSeconds: 3600),
+                                               expectedRevision: try #require(workspace.snapshot).revision)
+            }
+            let before = try #require(workspace.snapshot)
+            let warnings = workspace.budgetWarnings.map(\.id)
+            let locale = Locale(identifier: "en_US_POSIX")
+            reports.refresh(now: 1_704_110_400, calendar: calendar("UTC"))
+            let weekBefore = try #require(reports.week)
+            let amountsBefore = reports.weeklyAmounts
+            #expect(Set(amountsBefore.map { ReportFormatting.amount($0, locale: locale) }) == Set(["EUR 60.00", "JPY 60"]))
+            for allocation in try BudgetRules.allocations(in: before) {
+                let used = try workspace.budgetUsage()[allocation.taskID] ?? 0
+                _ = ReportFormatting.budgetHours(seconds: used, locale: locale)
+                _ = ReportFormatting.budgetBalance(used: used, budget: allocation.limitSeconds, locale: locale)
+                _ = ReportFormatting.budgetAllocation(allocated: allocation.allocatedSeconds, budget: allocation.limitSeconds, locale: locale)
+            }
+            for (projectID, expected) in [(euro, "EUR 60.00"), (yen, "JPY 60")] {
+                reports.openProject(projectID)
+                reports.refresh(now: 1_704_110_400, calendar: calendar("UTC"))
+                let report = try #require(reports.project)
+                #expect(report.total.totalSeconds == 3600)
+                let amount = try #require(reports.projectAmount)
+                #expect(ReportFormatting.amount(amount, locale: locale) == expected)
+            }
+            reports.backToWeek()
+            reports.refresh(now: 1_704_110_400, calendar: calendar("UTC"))
+            #expect(reports.week == weekBefore)
+            #expect(reports.weeklyAmounts == amountsBefore)
+            #expect(workspace.snapshot == before)
+            #expect(workspace.budgetWarnings.map(\.id) == warnings)
+        }
+    }
+}
