@@ -63,6 +63,63 @@ private final class NativeQuitWriteProbe: @unchecked Sendable {
         }
     }
 
+    @Test(arguments: [false, true])
+    func reviewRouteSurvivesSceneActionReinstallation(afterSleep: Bool) async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            defer { host.invalidate() }
+            if afterSleep {
+                let clock = NativeClock(), lifecycle = Lifecycle(host: host)
+                t.workspace.configureTimer(clock: { clock.read() })
+                let p = try await project(t), id = try await task(t, project: p)
+                host.submitTimer(.start(taskID: id)); await host.drain()
+                clock.set(110); lifecycle.willSleep(); await host.drain()
+                lifecycle.didWake(at: Date(timeIntervalSince1970: 120)); await host.drain()
+                #expect(t.workspace.snapshot?.pendingSleepIntervals.count == 1)
+            }
+            let before = t.workspace.snapshot
+            var opens = 0
+            host.installSceneActions(workspace: {
+                opens += 1
+                // Opening a window can synchronously re-evaluate NativeCommands.body.
+                host.installSceneActions(workspace: { opens += 1 }, settings: {})
+            }, settings: {})
+            host.openReview()
+            #expect(opens == 1)
+            #expect(host.track.destination == .track)
+            guard case .timeReview = host.track.sheet else { Issue.record("Missing time review"); return }
+            #expect(host.track.feedback == nil)
+            #expect(t.workspace.snapshot == before)
+            host.track.cancelSheet()
+            host.openReports()
+            #expect(opens == 2 && host.track.destination == .reports)
+        }
+    }
+
+    @Test func reentrantSceneCallbacksPreserveRouteOrder() async throws {
+        try await withTrack { t, directory in
+            let host = NativeHost(directory: directory, workspace: t.workspace)
+            defer { host.invalidate() }
+            var events: [String] = []
+            host.installSceneActions(workspace: {
+                events.append("workspace")
+                if events.count == 1 {
+                    host.openSettings()
+                    host.openReports()
+                }
+            }, settings: {
+                events.append("settings")
+                // The initial route must finish before the settings callback runs.
+                #expect(host.track.sheet != nil)
+                host.openTrack()
+            })
+            host.openReview()
+            #expect(events == ["workspace", "settings", "workspace", "workspace"])
+            #expect(host.track.destination == .track)
+            #expect(host.track.feedback == nil)
+        }
+    }
+
     @Test func schedulerAndSleepWakeTimestamp() async throws {
         #expect(Lifecycle.checkpointInterval == 15)
         #expect(Lifecycle.budgetInterval == 1)

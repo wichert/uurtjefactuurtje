@@ -15,6 +15,7 @@ import LibraryStore
     @ObservationIgnored private var settingsAction: (() -> Void)?
     private enum Route { case track, reports, review, settings, task(UUID), newTask, project, time }
     private var pending: [Route] = []
+    @ObservationIgnored private var flushingRoutes = false
     private var accepted: [UUID: Task<Void, Never>] = [:]
     private var observing = true
     var publication: (() -> Void)?
@@ -131,7 +132,10 @@ import LibraryStore
     func addTime() { if acceptingMutations { route(.time) } }
     private func route(_ route: Route) { pending.append(route); flushRoutes() }
     private func flushRoutes() {
-        guard let openWindow else { return }
+        guard !flushingRoutes, let openWindow else { return }
+        // Scene callbacks can synchronously reinstall actions and re-enter this method.
+        flushingRoutes = true
+        defer { flushingRoutes = false }
         while let route = pending.first {
             if case .settings = route {
                 guard let settingsAction else { return }
