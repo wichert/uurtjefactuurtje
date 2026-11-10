@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>UurtjeFactuurtje app icon — calendar and clock</title>
+  <desc>A warm ivory calendar with an amber header and a clear midnight-blue clock, set on a deep teal squircle.</desc>
+  <defs>
+    <linearGradient id="background" x1="180" y1="100" x2="850" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#285E70"/>
+      <stop offset="1" stop-color="#102D43"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="512" y1="210" x2="512" y2="830" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFBF2"/>
+      <stop offset="1" stop-color="#F5E9D5"/>
+    </linearGradient>
+    <filter id="shadow" x="140" y="150" width="744" height="760" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#061B2B" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- The full-bleed artwork is masked by the squircle for the exported icon. -->
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#background)"/>
+  <path d="M126 250C202 135 333 78 467 64H256C133 64 64 133 64 256v151c16-57 35-110 62-157Z" fill="#FFFFFF" opacity="0.055"/>
+
+  <g filter="url(#shadow)">
+    <!-- Calendar: one bold, familiar silhouette with no small text. -->
+    <rect x="208" y="218" width="608" height="610" rx="84" fill="url(#paper)"/>
+    <path d="M292 218h440a84 84 0 0 1 84 84v76H208v-76a84 84 0 0 1 84-84Z" fill="#F3A45F"/>
+    <path d="M208 350h608v28H208Z" fill="#E98C4B" opacity="0.35"/>
+
+    <!-- Oversized binding rings remain legible at Dock size. -->
+    <rect x="324" y="168" width="56" height="154" rx="28" fill="#12364B"/>
+    <rect x="644" y="168" width="56" height="154" rx="28" fill="#12364B"/>
+    <path d="M339 193v92" stroke="#FFF3DE" stroke-width="14" stroke-linecap="round" opacity="0.8"/>
+    <path d="M659 193v92" stroke="#FFF3DE" stroke-width="14" stroke-linecap="round" opacity="0.8"/>
+
+    <!-- Clock: high-contrast hands and twelve simple hour marks. -->
+    <circle cx="512" cy="589" r="199" fill="#153B51"/>
+    <circle cx="512" cy="589" r="178" fill="none" stroke="#DCE9E5" stroke-width="8"/>
+    <g stroke="#DCE9E5" stroke-width="10" stroke-linecap="round">
+      <path d="M512 429v17"/>
+      <path d="M512 429v17" transform="rotate(30 512 589)"/>
+      <path d="M512 429v17" transform="rotate(60 512 589)"/>
+      <path d="M512 429v17" transform="rotate(90 512 589)"/>
+      <path d="M512 429v17" transform="rotate(120 512 589)"/>
+      <path d="M512 429v17" transform="rotate(150 512 589)"/>
+      <path d="M512 429v17" transform="rotate(180 512 589)"/>
+      <path d="M512 429v17" transform="rotate(210 512 589)"/>
+      <path d="M512 429v17" transform="rotate(240 512 589)"/>
+      <path d="M512 429v17" transform="rotate(270 512 589)"/>
+      <path d="M512 429v17" transform="rotate(300 512 589)"/>
+      <path d="M512 429v17" transform="rotate(330 512 589)"/>
+    </g>
+    <path d="M512 589V481" stroke="#FFFBF2" stroke-width="24" stroke-linecap="round"/>
+    <path d="m512 589 89 52" stroke="#FFFBF2" stroke-width="24" stroke-linecap="round"/>
+    <circle cx="512" cy="589" r="18" fill="#F3A45F"/>
+  </g>
+</svg>
