@@ -56,8 +56,7 @@ struct WorkspaceFeedback: View {
     private var presentation: TrackPresentation { host.track }
     private var model: WorkspaceModel { host.workspace }
     private var hasFeedback: Bool {
-        model.isBusy || presentation.acceptedWork || presentation.feedback != nil
-            || host.hasRecoveryFeedback || !model.budgetWarnings.isEmpty
+        model.isBusy || presentation.acceptedWork || host.hasRecoveryFeedback
     }
     var body: some View {
         if hasFeedback {
@@ -66,32 +65,7 @@ struct WorkspaceFeedback: View {
                     if model.isBusy || presentation.acceptedWork {
                         ProgressView(model.availability == .opening ? "Opening library…" : "Finishing accepted work…")
                     }
-                    if let message = presentation.feedback {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(message).textSelection(.enabled)
-                            Button("Dismiss message") { presentation.feedback = nil }
-                        }
-                    }
                     WorkspaceRecovery(host: host)
-                    if !model.budgetWarnings.isEmpty {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(model.budgetWarnings) { batch in
-                                    GroupBox("Committed budget warning") {
-                                        ForEach(batch.warnings, id: \.taskID) { warning in
-                                            HStack {
-                                                Text("\(presentation.path(warning.taskID)): lifetime budget \(warning.threshold.rawValue)% reached")
-                                                Button("Reveal task") { presentation.revealTask(warning.taskID) }
-                                            }
-                                        }
-                                        Button("Dismiss this warning batch") { model.dismissBudgetWarning(batch.id) }
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 64)
-                    }
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)

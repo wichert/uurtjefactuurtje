@@ -15,6 +15,7 @@ struct WeekReturnContext {
     var weekAnchor: Int64?
     var includeArchived = false
     var selectedProjectID: UUID?
+    private(set) var scopeTaskID: UUID?
     var period: ReportPeriod = .allTime
     var expandedTaskIDs: Set<UUID> = []
     var selectedLeafID: UUID?
@@ -47,17 +48,42 @@ struct WeekReturnContext {
 
     func showThisWeek() { weekAnchor = nil }
 
-    func openProject(_ projectID: UUID) {
-        guard visibleProjects.contains(where: { $0.id == projectID }) else { return }
-        if mode == .week { returnToWeek = WeekReturnContext(anchor: weekAnchor, includeArchived: includeArchived) }
-        if selectedProjectID != projectID {
+    func openProject(_ projectID: UUID, scopeTaskID: UUID? = nil) {
+        guard let snapshot = track.workspace.snapshot,
+              snapshot.projects.contains(where: { $0.id == projectID }),
+              scopeTaskID == nil || snapshot.tasks.contains(where: {
+                  $0.id == scopeTaskID && $0.projectID == projectID
+              }) else { return }
+        if mode == .week {
+            returnToWeek = WeekReturnContext(anchor: weekAnchor, includeArchived: includeArchived)
+        }
+        if snapshot.projects.contains(where: { $0.id == projectID && $0.isArchived }) {
+            includeArchived = true
+        }
+        if selectedProjectID != projectID || self.scopeTaskID != scopeTaskID {
             selectedProjectID = projectID
+            self.scopeTaskID = scopeTaskID
             period = .allTime
             expandedTaskIDs = []
             selectedLeafID = nil
             selectedEntryID = nil
+            project = nil
+            taskAmounts = [:]
+            entryAmounts = [:]
+            projectAmount = nil
         }
         mode = .project
+    }
+
+    func clearTaskFilter() {
+        scopeTaskID = nil
+        expandedTaskIDs = []
+        selectedLeafID = nil
+        selectedEntryID = nil
+        project = nil
+        taskAmounts = [:]
+        entryAmounts = [:]
+        projectAmount = nil
     }
 
     func openDay(projectID: UUID, day: WeeklyReportDay) {
@@ -82,34 +108,42 @@ struct WeekReturnContext {
 
     func projectReport(calendar: Calendar, firstWeekday: Int) throws -> ProjectReport? {
         guard let id = selectedProjectID else { return nil }
-        return try track.workspace.projectReport(id, period: period, calendar: calendar, firstWeekday: firstWeekday)
+        return try track.workspace.projectReport(id, period: period, calendar: calendar,
+                                                 firstWeekday: firstWeekday, scopeTaskID: scopeTaskID)
     }
 
-    func refresh(now: Int64, calendar: Calendar) {
-        self.calendar = calendar
+    private func clearResults() {
         week = nil
         project = nil
         weeklyAmounts = []
         taskAmounts = [:]
         entryAmounts = [:]
         projectAmount = nil
+    }
+
+    func refresh(now: Int64, calendar: Calendar) {
+        self.calendar = calendar
         error = nil
         guard track.workspace.availability == .ready || track.workspace.availability == .reviewRequired,
               track.workspace.snapshot != nil else {
+            clearResults()
             error = "Library unavailable. Open or recover the library to view reports."
             return
         }
         guard let weekday = track.workspace.firstWeekday else {
+            clearResults()
             error = "Week start is unavailable. Wait for settings or reopen the library."
             return
         }
         guard (1...7).contains(weekday) else {
+            clearResults()
             error = "Invalid confirmed week start: \(weekday)."
             return
         }
         self.calendar.firstWeekday = weekday
         if let id = selectedProjectID, !visibleProjects.contains(where: { $0.id == id }) {
             selectedProjectID = nil
+            scopeTaskID = nil
             expandedTaskIDs = []
             selectedLeafID = nil
             selectedEntryID = nil
@@ -145,8 +179,14 @@ struct WeekReturnContext {
                 self.taskAmounts = taskAmounts
                 self.entryAmounts = entryAmounts
                 projectAmount = total
+            } else {
+                project = nil
+                taskAmounts = [:]
+                entryAmounts = [:]
+                projectAmount = nil
             }
         } catch {
+            clearResults()
             self.error = "Report unavailable: \(error)"
         }
     }

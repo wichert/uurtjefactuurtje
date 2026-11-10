@@ -5,6 +5,7 @@ import LibraryStore
 @MainActor @Observable final class NativeHost {
     let workspace: WorkspaceModel
     let track: TrackPresentation
+    let reports: ReportsPresentation
     let directory: URL
     var acceptingMutations: Bool { quitAttempt == nil && available }
     private(set) var quitAttempt: UUID?
@@ -13,8 +14,12 @@ import LibraryStore
     // Commands install these during graph evaluation; replacing callbacks must not invalidate that graph.
     @ObservationIgnored private var openWindow: (() -> Void)?
     @ObservationIgnored private var settingsAction: (() -> Void)?
-    private enum Route { case track, reports, review, settings, task(UUID), newTask, project, time }
+    private enum Route {
+        case track, reports, projectReport(UUID, UUID?), review, settings, task(UUID), newTask, project, time
+    }
     private var pending: [Route] = []
+    private(set) var pendingAutoReview = false
+    @ObservationIgnored var information: ((UUID, String) -> Void)?
     @ObservationIgnored private var flushingRoutes = false
     private var accepted: [UUID: Task<Void, Never>] = [:]
     private var observing = true
@@ -25,7 +30,9 @@ import LibraryStore
         self.directory = directory
         let model = workspace ?? WorkspaceModel(directory: directory)
         self.workspace = model
-        track = TrackPresentation(workspace: model, defaults: defaults)
+        let presentation = TrackPresentation(workspace: model, defaults: defaults)
+        track = presentation
+        reports = ReportsPresentation(track: presentation)
         track.acceptingMutations = { [weak self] in self?.acceptingMutations == true }
         observe()
     }
@@ -124,7 +131,41 @@ import LibraryStore
     }
     func openTrack() { route(.track) }
     func openReports() { route(.reports) }
-    func openReview() { route(.review) }
+    func openReview() {
+        if case .timeReview = track.sheet {
+            pendingAutoReview = false
+            track.destination = .track
+            return
+        }
+        route(.review)
+    }
+
+    func openProjectReport(projectID: UUID, scopeTaskID: UUID? = nil) {
+        route(.projectReport(projectID, scopeTaskID))
+    }
+
+    private var needsTimeReview: Bool {
+        workspace.snapshot?.pendingSleepIntervals.isEmpty == false
+            || workspace.timerStatus == .reviewRequired
+            || workspace.availability == .reviewRequired
+    }
+
+    private var canPresentAutoReview: Bool {
+        needsTimeReview && available && workspace.snapshot != nil && !hasUncertainPublication
+            && track.sheet == nil && track.suspendedTaskDraft == nil && !track.acceptedWork
+            && !workspace.isBusy && quitAttempt == nil && !sleeping
+    }
+
+    func requestAutoReviewIfNeeded() {
+        if needsTimeReview { pendingAutoReview = true }
+        flushRoutes()
+    }
+
+    private func publishInformation() {
+        guard let message = track.feedback, let information else { return }
+        track.feedback = nil
+        information(UUID(), message)
+    }
     func openSettings() { route(.settings) }
     func revealNotificationTask(_ id: UUID) { route(.task(id)) }
     func newTask() { if acceptingMutations { route(.newTask) } }
@@ -147,7 +188,13 @@ import LibraryStore
             switch route {
             case .track: track.destination = .track
             case .reports: track.destination = .reports
-            case .review: track.destination = .track; track.reviewTime()
+            case .projectReport(let projectID, let scopeTaskID):
+                reports.openProject(projectID, scopeTaskID: scopeTaskID)
+                track.destination = .reports
+            case .review:
+                track.destination = .track
+                track.reviewTime()
+                if case .timeReview = track.sheet { pendingAutoReview = false }
             case .task(let id): track.revealTask(id)
             case .newTask:
                 track.destination = .track
@@ -159,6 +206,20 @@ import LibraryStore
             case .settings: break
             }
         }
+        guard pendingAutoReview else { return }
+        if available, !workspace.isBusy, !needsTimeReview {
+            pendingAutoReview = false
+            return
+        }
+        if case .timeReview = track.sheet {
+            pendingAutoReview = false
+            return
+        }
+        guard canPresentAutoReview else { return }
+        pendingAutoReview = false
+        track.destination = .track
+        track.reviewTime()
+        openWindow()
     }
     func reopen() {
         guard canReopen else { return }
@@ -201,7 +262,10 @@ import LibraryStore
     }
     func finishQuit(_ token: UUID, cancelled: Bool) {
         guard quitAttempt == token else { return }
-        if cancelled { quitAttempt = nil }
+        if cancelled {
+            quitAttempt = nil
+            flushRoutes()
+        }
     }
     func drain() async {
         while true {
@@ -224,13 +288,22 @@ import LibraryStore
         guard observing else { return }
         withObservationTracking {
             _ = workspace.snapshot; _ = workspace.availability; _ = workspace.issue
-            _ = workspace.budgetWarnings; _ = workspace.isBusy
+            _ = workspace.budgetWarnings; _ = workspace.isBusy; _ = workspace.timerStatus
+            _ = track.sheet; _ = track.suspendedTaskDraft; _ = track.acceptedWork
+            _ = track.feedback; _ = quitAttempt; _ = sleeping
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self, self.observing else { return }
-                self.observe(); self.flushRoutes(); self.publication?()
+                self.observe()
+                self.flushRoutes()
+                self.publishInformation()
+                self.publication?()
             }
         }
     }
-    func invalidate() { observing = false; publication = nil }
+    func invalidate() {
+        observing = false
+        publication = nil
+        information = nil
+    }
 }

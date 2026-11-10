@@ -11,6 +11,8 @@ import UserNotifications
     private let deliver: @MainActor (UNNotificationRequest) async throws -> Void
     private var baseline: LibrarySnapshot?
     private var seenBatchIDs = Set<UUID>()
+    private var seenNoticeIDs = Set<UUID>()
+    nonisolated static var foregroundOptions: UNNotificationPresentationOptions { [.banner, .list, .sound] }
     private var authorizationAttempted = false
     private var generation = UUID()
     private var pending: Task<Void, Never>?
@@ -20,7 +22,7 @@ import UserNotifications
                      center: UNUserNotificationCenter = .current()) {
         self.init(path: path, reveal: reveal,
                   authorizationStatus: { await center.notificationSettings().authorizationStatus },
-                  requestAuthorization: { try await center.requestAuthorization(options: [.alert]) },
+                  requestAuthorization: { try await center.requestAuthorization(options: [.alert, .sound]) },
                   deliver: { try await center.add($0) })
         center.delegate = self
     }
@@ -40,7 +42,9 @@ import UserNotifications
     }
 
     // Call with nil at the close/reopen boundary; existing batches become baseline, not deliveries.
-    func consume(snapshot: LibrarySnapshot?, batches: [BudgetWarningBatch]) {
+    func consume(snapshot: LibrarySnapshot?, batches: [BudgetWarningBatch],
+                 acknowledge: (UUID) -> Void = { _ in }) {
+        defer { for batch in batches { acknowledge(batch.id) } }
         guard let snapshot else {
             baseline = nil
             generation = UUID()
@@ -55,24 +59,25 @@ import UserNotifications
         }
         let previousTasks = Dictionary(uniqueKeysWithValues: before.tasks.map { ($0.id, $0) })
         let enabled = snapshot.revision > before.revision && snapshot.tasks.contains {
-            $0.budgetSeconds != nil && previousTasks[$0.id]?.budgetSeconds == nil
+            $0.budgetMinutes != nil && previousTasks[$0.id]?.budgetMinutes == nil
         }
         baseline = snapshot
         let shouldRequest = enabled && !authorizationAttempted
 
-        // Reserve IDs before any await: denial, delivery failure and banner dismissal cannot replay them.
+        // Reserve IDs before any await: denial, delivery failure and acknowledgment cannot replay them.
         let requests = batches.compactMap { batch -> UNNotificationRequest? in
             guard seenBatchIDs.insert(batch.id).inserted else { return nil }
             let warnings = batch.warnings.filter { $0.threshold != .none }
             guard !warnings.isEmpty else { return nil }
             let shown = warnings.prefix(Self.maximumTaskIDs)
             let content = UNMutableNotificationContent()
+            content.sound = .default
             content.title = "Budget warning"
             content.body = shown.map {
                 "\(path($0.taskID)): lifetime budget \($0.threshold.rawValue)% reached"
             }.joined(separator: "\n")
             if shown.count < warnings.count {
-                content.body += "\nAnd \(warnings.count - shown.count) more warnings in the app."
+                content.body += "\nAnd \(warnings.count - shown.count) more budget warnings."
             }
             content.userInfo = ["taskIDs": shown.map { $0.taskID.uuidString.lowercased() }]
             return UNNotificationRequest(identifier: "budget.\(batch.id.uuidString.lowercased())",
@@ -96,9 +101,35 @@ import UserNotifications
             guard allowed else { return }
             for request in requests {
                 guard self.generation == generation else { return }
-                // Delivery is best-effort and never changes the workspace or its in-app banners.
+                // Delivery is best-effort and never changes the workspace.
                 do { try await deliver(request) } catch { continue }
             }
+        }
+    }
+
+    func notify(id: UUID, title: String, body: String, taskIDs: [UUID] = []) {
+        guard taskIDs.count <= Self.maximumTaskIDs,
+              Set(taskIDs).count == taskIDs.count,
+              seenNoticeIDs.insert(id).inserted else { return }
+        let content = UNMutableNotificationContent()
+        content.sound = .default
+        content.title = title
+        content.body = body
+        if !taskIDs.isEmpty {
+            content.userInfo = ["taskIDs": taskIDs.map { $0.uuidString.lowercased() }]
+        }
+        let request = UNNotificationRequest(identifier: "notice.\(id.uuidString.lowercased())",
+                                             content: content, trigger: nil)
+        let previous = pending
+        let generation = generation
+        pending = Task { @MainActor in
+            if let previous { await previous.value }
+            guard self.generation == generation else { return }
+            let status = await authorizationStatus()
+            guard self.generation == generation,
+                  status == .authorized || status == .provisional else { return }
+            // Informational notices do not prompt for permission or mutate the workspace.
+            do { try await deliver(request) } catch { return }
         }
     }
 
@@ -121,7 +152,7 @@ import UserNotifications
         _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([]) // The shared in-app banners already present committed warnings.
+        completionHandler(Self.foregroundOptions)
     }
 
     nonisolated func userNotificationCenter(

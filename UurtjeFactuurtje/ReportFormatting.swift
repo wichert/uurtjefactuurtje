@@ -53,7 +53,7 @@ static func budgetHours(seconds: Decimal, locale: Locale = .current) -> String {
 }
 
 static func budgetBalance(used: Decimal, budget: Int64, locale: Locale = .current) -> String {
-    let difference = Decimal(budget) - used
+    let difference = Decimal(budget) * 60 - used
     if difference < 0 {
         return "\(budgetHours(seconds: -difference, locale: locale)) overrun"
     }
@@ -64,8 +64,15 @@ static func budgetBalance(used: Decimal, budget: Int64, locale: Locale = .curren
 static func budgetAllocation(allocated: Decimal, budget: Int64, locale: Locale = .current) -> String {
     let difference = Decimal(budget) - allocated
     let balance = difference < 0
-        ? "\(budgetHours(seconds: -difference, locale: locale)) overallocated"
-        : "\(budgetHours(seconds: difference, locale: locale)) unallocated"
-    return "Allocated \(budgetHours(seconds: allocated, locale: locale)) / \(budgetHours(seconds: Decimal(budget), locale: locale)); \(balance)"
+        ? "\(budgetHours(seconds: -difference * 60, locale: locale)) overallocated"
+        : "\(budgetHours(seconds: difference * 60, locale: locale)) unallocated"
+    return "Allocated \(budgetHours(seconds: allocated * 60, locale: locale)) / \(budgetHours(seconds: Decimal(budget) * 60, locale: locale)); \(balance)"
+}
+
+static func totalTime(seconds: Int64) -> String {
+    let value = max(0, seconds)
+    let hours = String(value / 3600)
+    let minutes = String((value % 3600) / 60)
+    return "\(hours.count < 2 ? "0" : "")\(hours):\(minutes.count < 2 ? "0" : "")\(minutes)"
 }
 }

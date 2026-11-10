@@ -66,11 +66,15 @@ import LibraryStore
         menu = MenuBarController(host: host)
         notifications = BudgetNotifications(path: { [weak host] id in host?.track.path(id) ?? id.uuidString },
                                             reveal: { [weak host] id in host?.revealNotificationTask(id) })
+        host.information = { [weak self] id, message in
+            self?.notifications?.notify(id: id, title: "UurtjeFactuurtje", body: message)
+        }
         host.publication = { [weak self] in
             guard let self else { return }
             self.menu?.refresh(at: Date())
             self.notifications?.consume(snapshot: self.host.available ? self.host.workspace.snapshot : nil,
-                                        batches: self.host.workspace.budgetWarnings)
+                                        batches: self.host.workspace.budgetWarnings,
+                                        acknowledge: { self.host.workspace.dismissBudgetWarning($0) })
         }
         schedule()
         let center = NSWorkspace.shared.notificationCenter
@@ -101,9 +105,8 @@ import LibraryStore
               let usage = try? host.workspace.budgetUsage(), let snapshot = host.workspace.snapshot else { return }
         // A crossing must be committed before it can become a notification.
         if snapshot.tasks.contains(where: { task in
-            guard let limit = task.budgetSeconds, let seconds = usage[task.id] else { return false }
-            let band: Int64 = seconds >= Decimal(limit) ? 100 : seconds * 100 >= Decimal(limit) * 80 ? 80 : 0
-            return band > task.lastWarnedThreshold.rawValue
+            guard let limit = task.budgetMinutes, let seconds = usage[task.id] else { return false }
+            return BudgetRules.band(used: seconds, budget: limit).rawValue > task.lastWarnedThreshold.rawValue
         }) { host.submitTimer(.checkpoint) }
     }
     func applicationDidResignActive(_ notification: Notification) { checkpointTick() }
@@ -133,12 +136,19 @@ import LibraryStore
             reviewAfterClose = false
             sleepGeneration = nil
             host.workspace.requireTimerReviewAfterClose(sleeping: false)
+            host.requestAutoReviewIfNeeded()
             menu?.refresh(at: date)
             return
         }
         if let generation = sleepGeneration, let instant = Self.wholeSecond(date) {
             sleepGeneration = nil
-            host.retain(host.workspace.enqueueWakeObservation(generation: generation, observedAt: instant))
+            let observation = host.workspace.enqueueWakeObservation(generation: generation, observedAt: instant)
+            host.retain(Task { @MainActor [host] in
+                await observation.value
+                host.requestAutoReviewIfNeeded()
+            })
+        } else {
+            host.requestAutoReviewIfNeeded()
         }
         menu?.refresh(at: date)
     }
@@ -215,6 +225,7 @@ import LibraryStore
                 if droppedCloseObservation {
                     reviewAfterClose = sleeping || host.sleeping
                     host.workspace.requireTimerReviewAfterClose(sleeping: reviewAfterClose)
+                    host.requestAutoReviewIfNeeded()
                 }
                 host.track.failure = "Close failed. Reopen and inspect; interrupted tracking requires review. No Stop or write was replayed. \(error)"
                 host.openTrack()

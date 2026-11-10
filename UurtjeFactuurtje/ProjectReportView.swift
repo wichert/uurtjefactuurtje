@@ -18,7 +18,8 @@ private struct ReportTaskRow: Identifiable {
     private var rows: [ReportTaskRow] {
         guard let report = reports.project else { return [] }
         let children = Dictionary(grouping: report.tasks, by: \.parentTaskID)
-        var stack: [(TaskRecord, Int)] = (children[nil] ?? []).reversed().map { ($0, 0) }
+        let roots = report.scopeTask.map { [$0] } ?? (children[nil] ?? [])
+        var stack: [(TaskRecord, Int)] = roots.reversed().map { ($0, 0) }
         var result: [ReportTaskRow] = []
         while let (task, depth) = stack.popLast() {
             let descendants = children[task.id] ?? []
@@ -41,6 +42,13 @@ private struct ReportTaskRow: Identifiable {
                     ForEach(reports.visibleProjects) { project in
                         Text(project.name + (project.isArchived ? " (archived)" : "")).tag(Optional(project.id))
                     }
+                }
+            }
+            if let scope = reports.scopeTaskID {
+                HStack {
+                    Text("Task scope: \(reports.track.path(scope))")
+                        .textSelection(.enabled)
+                    Button("Clear task filter") { reports.clearTaskFilter() }
                 }
             }
             if reports.selectedProjectID != nil {
@@ -114,8 +122,12 @@ private struct ReportTaskRow: Identifiable {
             if row.hasChildren { Text(row.task.name) }
             Text("Period: \(ReportFormatting.duration(seconds: report.taskTotals[row.id]?.totalSeconds ?? 0))")
             if let amount = reports.taskAmounts[row.id] { Text(ReportFormatting.amount(amount, locale: locale)) }
-            if let budget = row.task.budgetSeconds {
-                Text("Lifetime usage: \(report.lifetimeUsage[row.id].map { NSDecimalNumber(decimal: $0).stringValue } ?? "unavailable") seconds / \(budget) seconds; band: \(report.displayBands[row.id].map { band($0) } ?? "unavailable")")
+            if let budget = row.task.budgetMinutes {
+                if let used = report.lifetimeUsage[row.id] {
+                    Text("Lifetime usage: \(ReportFormatting.budgetHours(seconds: used, locale: locale)) / \(ReportFormatting.budgetHours(seconds: Decimal(budget) * 60, locale: locale)); \(ReportFormatting.budgetBalance(used: used, budget: budget, locale: locale)); band: \(report.displayBands[row.id].map { band($0) } ?? "unavailable")")
+                } else {
+                    Text("Lifetime budget usage unavailable")
+                }
             }
         }.padding(.leading, CGFloat(row.depth) * 16)
     }

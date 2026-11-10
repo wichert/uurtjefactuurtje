@@ -326,15 +326,16 @@ private final class NativeQuitWriteProbe: @unchecked Sendable {
             notifications.consume(snapshot: baseline, batches: [batch])
             await notifications.waitForPendingDelivery()
             #expect(prompts == 0); #expect(delivered.isEmpty)
-            let enabled = LibrarySnapshot(schemaVersion: 1, revision: baseline.revision + 1,
+            let enabled = LibrarySnapshot(schemaVersion: 2, revision: baseline.revision + 1,
                 projects: baseline.projects,
-                tasks: [TaskRecord(id: id, projectID: p, name: "Task", budgetSeconds: 100)],
+                tasks: [TaskRecord(id: id, projectID: p, name: "Task", budgetMinutes: 100)],
                 entries: [], activeTimer: nil, pendingSleepIntervals: [])
             let fresh = BudgetWarningBatch(id: UUID(), warnings: batch.warnings)
             notifications.consume(snapshot: enabled, batches: [batch, fresh])
             notifications.consume(snapshot: enabled, batches: [batch, fresh])
             await notifications.waitForPendingDelivery()
             #expect(prompts == 1); #expect(delivered.count == 1)
+            #expect(delivered[0].content.sound != nil)
             #expect(delivered.first?.content.body.contains("Project / Parent / Task") == true)
             #expect(BudgetNotifications.taskIDs(in: delivered[0].content.userInfo) == [id])
             for malformed: [AnyHashable: Any] in [[:], ["taskIDs": "bad"], ["taskIDs": ["bad"]],
@@ -697,6 +698,7 @@ private final class NativeQuitWriteProbe: @unchecked Sendable {
             let active = try #require(before.activeTimer)
             #expect(t.workspace.timerStatus == .paused(entryID: active.entryID))
             let lifecycle = Lifecycle(host: host), gate = NativeSubmissionGate()
+            host.installSceneActions(workspace: {}, settings: {})
             var closes = 0, replies = 0
             lifecycle.confirmQuit = { true }
             lifecycle.close = { _ in
@@ -736,6 +738,9 @@ private final class NativeQuitWriteProbe: @unchecked Sendable {
             #expect(writes.count == 1 && t.workspace.snapshot == before)
             #expect(t.workspace.snapshot?.pendingSleepIntervals.isEmpty == true)
             #expect(t.workspace.timerStatus == .reviewRequired)
+            guard case .timeReview = host.track.sheet else { Issue.record("Missing failed-close review"); return }
+            #expect(!host.pendingAutoReview && host.track.failure?.contains("Close failed") == true)
+            #expect(writes.count == 1 && t.workspace.snapshot == before)
             host.invalidate()
         }
     }
@@ -1117,5 +1122,175 @@ extension NativeHostTests {
         let counts = await probe.counts()
         #expect(counts.opens == 2 && counts.writes == 0)
         await workspace.close()
+    }
+}
+
+@MainActor struct DeferredWakeAndNoticeTests {
+    @Test func wakeIntentDefersCoalescesAndResumesAfterDraftAndQuit() async throws {
+        try await withTrack { track, directory in
+            let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
+            let clock = NativeClock(), lifecycle = Lifecycle(host: host)
+            track.workspace.configureTimer(clock: { clock.read() })
+            let p = try await project(track), leaf = try await task(track, project: p)
+            host.submitTimer(.start(taskID: leaf)); await host.drain()
+            host.track.editProject(p)
+            let token = host.track.routeToken
+            let quit = try #require(host.beginQuit())
+            clock.set(110); lifecycle.willSleep(); await host.drain()
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 120)); await host.drain()
+            #expect(track.workspace.snapshot?.pendingSleepIntervals.count == 1)
+            #expect(host.pendingAutoReview && host.track.routeToken == token)
+            host.requestAutoReviewIfNeeded(); host.requestAutoReviewIfNeeded()
+            var opens = 0
+            host.installSceneActions(workspace: {
+                opens += 1
+                host.installSceneActions(workspace: { opens += 1 }, settings: {})
+            }, settings: {})
+            #expect(opens == 0)
+            host.track.cancelSheet()
+            host.requestAutoReviewIfNeeded()
+            #expect(opens == 0 && host.pendingAutoReview)
+            let before = track.workspace.snapshot
+            host.finishQuit(quit, cancelled: true)
+            #expect(opens == 1 && !host.pendingAutoReview)
+            guard case .timeReview = host.track.sheet else { Issue.record("Missing automatic review"); return }
+            #expect(track.workspace.snapshot == before)
+            host.requestAutoReviewIfNeeded()
+            #expect(opens == 1 && !host.pendingAutoReview)
+        }
+    }
+
+    @Test func cancellingFinalSuspendedDraftAutomaticallyRetriesReview() async throws {
+        try await withTrack { track, directory in
+            let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
+            let clock = NativeClock(), lifecycle = Lifecycle(host: host)
+            track.workspace.configureTimer(clock: { clock.read() })
+            let p = try await project(track), root = try await task(track, project: p, name: "Root")
+            let leaf = try await task(track, project: p, parent: root, name: "Leaf")
+            host.submitTimer(.start(taskID: leaf)); await host.drain()
+            host.track.newTask(projectID: p, parentID: root)
+            host.track.editConstrainingBudget(taskID: root)
+            var opens = 0
+            host.installSceneActions(workspace: { opens += 1 }, settings: {})
+            clock.set(110); lifecycle.willSleep(); await host.drain()
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 120)); await host.drain()
+            #expect(host.pendingAutoReview && opens == 0)
+            host.track.cancelSheet()
+            #expect(host.track.suspendedTaskDraft == nil && host.track.sheet != nil)
+            host.track.cancelSheet()
+            // Match the host's observation callback without a timer or polling loop.
+            await Task { @MainActor in }.value
+            #expect(opens == 1 && !host.pendingAutoReview)
+            guard case .timeReview = host.track.sheet else { Issue.record("Missing deferred review"); return }
+        }
+    }
+
+    @Test func acceptedWorkAndUnavailableLibraryKeepAutomaticIntent() async throws {
+        try await withTrack { track, directory in
+            let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
+            let clock = NativeClock(), lifecycle = Lifecycle(host: host)
+            track.workspace.configureTimer(clock: { clock.read() })
+            let p = try await project(track), leaf = try await task(track, project: p)
+            host.submitTimer(.start(taskID: leaf)); await host.drain()
+            host.track.editProject(p)
+            let token = host.track.routeToken
+            #expect(host.track.begin(token))
+            clock.set(110); lifecycle.willSleep(); await host.drain()
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 120)); await host.drain()
+            var opens = 0
+            host.installSceneActions(workspace: { opens += 1 }, settings: {})
+            #expect(host.pendingAutoReview && opens == 0 && host.track.acceptedWork)
+            await track.workspace.close()
+            host.track.complete(token)
+            host.requestAutoReviewIfNeeded()
+            #expect(opens == 0 && host.pendingAutoReview)
+            host.reopen(); await host.drain()
+            #expect(opens == 1 && !host.pendingAutoReview)
+            guard case .timeReview = host.track.sheet else { Issue.record("Missing reopened review"); return }
+        }
+    }
+
+    @Test func informationUsesOneShotSinkAndFailuresStayInApp() async throws {
+        try await withTrack { track, directory in
+            let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
+            var messages: [String] = [], ids: [UUID] = []
+            host.information = { ids.append($0); messages.append($1) }
+            host.track.failure = "Keep this error in the app"
+            host.track.feedback = "Created Generic; moved saved entries."
+            await Task { @MainActor in }.value
+            #expect(messages == ["Created Generic; moved saved entries."] && Set(ids).count == 1)
+            #expect(host.track.feedback == nil && host.track.failure != nil && host.hasRecoveryFeedback)
+            await Task { @MainActor in }.value
+            #expect(messages.count == 1)
+        }
+    }
+
+    @Test func foregroundNoticesDeduplicateAndDeniedDeliveryDoesNotPrompt() async throws {
+        #expect(BudgetNotifications.foregroundOptions == [.banner, .list, .sound])
+        var delivered: [UNNotificationRequest] = [], prompts = 0
+        let notice = BudgetNotifications(path: { _ in "Task" }, reveal: { _ in },
+            authorizationStatus: { .authorized }, requestAuthorization: { prompts += 1; return true },
+            deliver: { delivered.append($0) })
+        let id = UUID(), taskID = UUID()
+        notice.notify(id: id, title: "Created", body: "Moved entries", taskIDs: [taskID])
+        notice.notify(id: id, title: "Created", body: "Moved entries", taskIDs: [taskID])
+        await notice.waitForPendingDelivery()
+        #expect(delivered.count == 1 && prompts == 0)
+        #expect(delivered[0].content.sound != nil)
+        #expect(BudgetNotifications.taskIDs(in: delivered[0].content.userInfo) == [taskID])
+        var attempts = 0
+        let denied = BudgetNotifications(path: { _ in "Task" }, reveal: { _ in },
+            authorizationStatus: { .denied }, requestAuthorization: { prompts += 1; return true },
+            deliver: { _ in attempts += 1 })
+        denied.notify(id: UUID(), title: "Created", body: "Task created")
+        await denied.waitForPendingDelivery()
+        #expect(attempts == 0 && prompts == 0)
+        let failing = BudgetNotifications(path: { _ in "Task" }, reveal: { _ in },
+            authorizationStatus: { .authorized }, requestAuthorization: { prompts += 1; return true },
+            deliver: { _ in attempts += 1; throw LibraryAccessError.unavailable })
+        failing.notify(id: id, title: "Created", body: "Task created")
+        await failing.waitForPendingDelivery()
+        failing.notify(id: id, title: "Created", body: "Task created")
+        await failing.waitForPendingDelivery()
+        #expect(attempts == 1 && prompts == 0)
+    }
+
+    @Test func consumedWarningBatchesAreAcknowledgedBeforeDeliveryAndNeverReplay() async throws {
+        try await withTrack { track, _ in
+            let projectID = try await project(track)
+            let taskID = try await task(track, project: projectID)
+            let snapshot = try #require(track.workspace.snapshot)
+            for status: UNAuthorizationStatus in [.authorized, .denied] {
+                var attempts = 0
+                let notices = BudgetNotifications(path: { _ in "Task" }, reveal: { _ in },
+                    authorizationStatus: { status }, requestAuthorization: { false },
+                    deliver: { _ in attempts += 1; throw LibraryAccessError.unavailable })
+                let baseline = BudgetWarningBatch(id: UUID(), warnings: [
+                    BudgetWarning(taskID: taskID, threshold: .eighty)
+                ])
+                var outstanding = [baseline]
+                notices.consume(snapshot: snapshot, batches: outstanding,
+                    acknowledge: { id in outstanding.removeAll { $0.id == id } })
+                #expect(outstanding.isEmpty && attempts == 0)
+                let fresh = BudgetWarningBatch(id: UUID(), warnings: baseline.warnings)
+                outstanding = [fresh]
+                notices.consume(snapshot: snapshot, batches: outstanding,
+                    acknowledge: { id in outstanding.removeAll { $0.id == id } })
+                #expect(outstanding.isEmpty && attempts == 0)
+                await notices.waitForPendingDelivery()
+                #expect(attempts == (status == .authorized ? 1 : 0))
+                notices.consume(snapshot: snapshot, batches: [fresh])
+                await notices.waitForPendingDelivery()
+                #expect(attempts == (status == .authorized ? 1 : 0))
+                outstanding = [fresh]
+                notices.consume(snapshot: nil, batches: outstanding,
+                    acknowledge: { id in outstanding.removeAll { $0.id == id } })
+                #expect(outstanding.isEmpty)
+            }
+        }
     }
 }

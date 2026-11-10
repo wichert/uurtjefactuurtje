@@ -248,49 +248,49 @@ extension ReportsPresentationTests {
 
     @Test func compactBudgetStatesUseExactSecondsNotRoundedHours() {
         let locale = Locale(identifier: "en_US_POSIX")
-        #expect(ReportFormatting.budgetBalance(used: 3599, budget: 3600, locale: locale) == "<0.01 h remaining")
-        #expect(ReportFormatting.budgetBalance(used: 3600, budget: 3600, locale: locale) == "Budget reached")
-        #expect(ReportFormatting.budgetBalance(used: 3601, budget: 3600, locale: locale) == "<0.01 h overrun")
+        #expect(ReportFormatting.budgetBalance(used: 3599, budget: 60, locale: locale) == "<0.01 h remaining")
+        #expect(ReportFormatting.budgetBalance(used: 3600, budget: 60, locale: locale) == "Budget reached")
+        #expect(ReportFormatting.budgetBalance(used: 3601, budget: 60, locale: locale) == "<0.01 h overrun")
         for (used, band) in [(Decimal(2879), WarningThreshold.none), (2880, .eighty), (3599, .eighty), (3600, .hundred), (3601, .hundred)] {
-            #expect(BudgetRules.band(used: used, budget: 3600) == band)
+            #expect(BudgetRules.band(used: used, budget: 60) == band)
         }
         let max = Decimal(Int64.max)
         #expect(ReportFormatting.budgetHours(seconds: max, locale: locale) == "≈2562047788015215.5 h")
         #expect(ReportFormatting.budgetHours(seconds: max * 2, locale: locale) == "≈5124095576030431 h")
-        #expect(ReportFormatting.budgetBalance(used: max + 1, budget: .max, locale: locale) == "<0.01 h overrun")
-        #expect(ReportFormatting.budgetBalance(used: max - 1, budget: .max, locale: locale) == "<0.01 h remaining")
+        #expect(ReportFormatting.budgetBalance(used: max * 60 + 1, budget: .max, locale: locale) == "<0.01 h overrun")
+        #expect(ReportFormatting.budgetBalance(used: max * 60 - 1, budget: .max, locale: locale) == "<0.01 h remaining")
         #expect(ReportFormatting.budgetAllocation(allocated: max * 2, budget: .max, locale: locale)
-            == "Allocated ≈5124095576030431 h / ≈2562047788015215.5 h; ≈2562047788015215.5 h overallocated")
+            == "Allocated ≈307445734561825860.23 h / ≈153722867280912930.12 h; ≈153722867280912930.12 h overallocated")
     }
 
     @Test func compactAllocationsKeepNearestFrontierAndLargeDecimalTotals() throws {
         let projectID = UUID(), root = UUID(), bridge = UUID(), child = UUID(), grandchild = UUID(), sibling = UUID()
         func snapshot(_ limit: Int64, _ first: Int64, _ second: Int64) -> LibrarySnapshot {
-            LibrarySnapshot(schemaVersion: 1, revision: 0,
+            LibrarySnapshot(schemaVersion: 2, revision: 0,
                 projects: [Project(id: projectID, name: "Client", hourlyRate: 60, currencyCode: "EUR")],
                 tasks: [
-                    TaskRecord(id: root, projectID: projectID, name: "Root", budgetSeconds: limit),
+                    TaskRecord(id: root, projectID: projectID, name: "Root", budgetMinutes: limit),
                     TaskRecord(id: bridge, projectID: projectID, parentTaskID: root, name: "Bridge"),
-                    TaskRecord(id: child, projectID: projectID, parentTaskID: bridge, name: "Child", budgetSeconds: first),
-                    TaskRecord(id: grandchild, projectID: projectID, parentTaskID: child, name: "Grandchild", budgetSeconds: 1),
-                    TaskRecord(id: sibling, projectID: projectID, parentTaskID: root, name: "Sibling", budgetSeconds: second)
+                    TaskRecord(id: child, projectID: projectID, parentTaskID: bridge, name: "Child", budgetMinutes: first),
+                    TaskRecord(id: grandchild, projectID: projectID, parentTaskID: child, name: "Grandchild", budgetMinutes: 1),
+                    TaskRecord(id: sibling, projectID: projectID, parentTaskID: root, name: "Sibling", budgetMinutes: second)
                 ], entries: [], activeTimer: nil, pendingSleepIntervals: [])
         }
         let locale = Locale(identifier: "en_US_POSIX")
-        let exact = try BudgetRules.allocations(in: snapshot(3600, 1800, 1800))
+        let exact = try BudgetRules.allocations(in: snapshot(60, 30, 30))
         let allocation = try #require(exact.first { $0.taskID == root })
-        #expect(allocation.allocatedSeconds == 3600, "Do not double-count the grandchild through its budgeted parent")
-        #expect(ReportFormatting.budgetAllocation(allocated: allocation.allocatedSeconds, budget: allocation.limitSeconds, locale: locale)
+        #expect(allocation.allocatedMinutes == 60, "Do not double-count the grandchild through its budgeted parent")
+        #expect(ReportFormatting.budgetAllocation(allocated: allocation.allocatedMinutes, budget: allocation.limitMinutes, locale: locale)
             == "Allocated 1 h / 1 h; 0 h unallocated")
-        let nearly = try BudgetRules.allocations(in: snapshot(3600, 1800, 1799))
+        let nearly = try BudgetRules.allocations(in: snapshot(60, 30, 29))
         let near = try #require(nearly.first { $0.taskID == root })
-        #expect(ReportFormatting.budgetAllocation(allocated: near.allocatedSeconds, budget: near.limitSeconds, locale: locale)
-            == "Allocated ≈1 h / 1 h; <0.01 h unallocated")
+        #expect(ReportFormatting.budgetAllocation(allocated: near.allocatedMinutes, budget: near.limitMinutes, locale: locale)
+            == "Allocated ≈0.98 h / 1 h; ≈0.02 h unallocated")
         let excessive = snapshot(.max, .max, .max)
         let huge = try #require(try BudgetRules.allocations(in: excessive).first { $0.taskID == root })
-        #expect(huge.allocatedSeconds == Decimal(Int64.max) * 2)
+        #expect(huge.allocatedMinutes == Decimal(Int64.max) * 2)
         #expect(SnapshotValidator.violations(in: excessive).contains { $0.code == .allocation && $0.recordID == root })
-        #expect(ReportFormatting.budgetAllocation(allocated: huge.allocatedSeconds, budget: huge.limitSeconds, locale: locale).hasSuffix("overallocated"))
+        #expect(ReportFormatting.budgetAllocation(allocated: huge.allocatedMinutes, budget: huge.limitMinutes, locale: locale).hasSuffix("overallocated"))
     }
 
     @Test func budgetDisplayDoesNotChangeMixedCurrencyReportsOrWrite() async throws {
@@ -304,7 +304,7 @@ extension ReportsPresentationTests {
                 let preview = try CorrectionPlanner.preview(.add(id: UUID(), taskID: taskID, startAt: start, endAt: end),
                                                              in: #require(workspace.snapshot))
                 _ = try await workspace.enqueueCorrection(.apply(preview)).value
-                _ = try await workspace.submit(.editTask(id: taskID, name: taskID == euroTask ? "Euro work" : "Yen work", budgetSeconds: 3600),
+                _ = try await workspace.submit(.editTask(id: taskID, name: taskID == euroTask ? "Euro work" : "Yen work", budgetMinutes: 60),
                                                expectedRevision: try #require(workspace.snapshot).revision)
             }
             let before = try #require(workspace.snapshot)
@@ -317,8 +317,8 @@ extension ReportsPresentationTests {
             for allocation in try BudgetRules.allocations(in: before) {
                 let used = try workspace.budgetUsage()[allocation.taskID] ?? 0
                 _ = ReportFormatting.budgetHours(seconds: used, locale: locale)
-                _ = ReportFormatting.budgetBalance(used: used, budget: allocation.limitSeconds, locale: locale)
-                _ = ReportFormatting.budgetAllocation(allocated: allocation.allocatedSeconds, budget: allocation.limitSeconds, locale: locale)
+                _ = ReportFormatting.budgetBalance(used: used, budget: allocation.limitMinutes, locale: locale)
+                _ = ReportFormatting.budgetAllocation(allocated: allocation.allocatedMinutes, budget: allocation.limitMinutes, locale: locale)
             }
             for (projectID, expected) in [(euro, "EUR 60.00"), (yen, "JPY 60")] {
                 reports.openProject(projectID)
@@ -335,5 +335,80 @@ extension ReportsPresentationTests {
             #expect(workspace.snapshot == before)
             #expect(workspace.budgetWarnings.map(\.id) == warnings)
         }
+    }
+}
+
+@MainActor struct ScopedReportsPresentationTests {
+    @Test func scopeRoutesPreservePeriodOnClearAndRejectCrossProject() async throws {
+        try await withTrack { track, directory in
+            let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
+            let p = try await project(track), other = try await project(track, name: "Other")
+            let root = try await task(track, project: p, name: "Root")
+            let child = try await task(track, project: p, parent: root, name: "Child")
+            let sibling = try await task(track, project: p, name: "Sibling")
+            let foreign = try await task(track, project: other, name: "Foreign")
+            var opens = 0
+            host.installSceneActions(workspace: { opens += 1 }, settings: {})
+            let reports = host.reports
+            #expect(reports.track === host.track)
+            reports.weekAnchor = 1_710_000_000
+            reports.includeArchived = true
+            host.openProjectReport(projectID: p, scopeTaskID: root)
+            #expect(opens == 1 && host.track.destination == .reports)
+            #expect(reports.scopeTaskID == root)
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            reports.refresh(now: 1_710_000_000, calendar: calendar)
+            #expect(Set(try #require(reports.project).tasks.map(\.id)) == Set([root, child]))
+            #expect(reports.project?.scopeTask?.id == root)
+            reports.period = .thisMonth
+            reports.expandedTaskIDs = [root]
+            reports.selectedLeafID = child
+            for now in 1_710_000_001...1_710_000_003 {
+                reports.refresh(now: Int64(now), calendar: calendar)
+                #expect(reports.expandedTaskIDs == [root] && reports.selectedLeafID == child)
+                #expect(reports.project?.scopeTask?.id == root && reports.error == nil)
+            }
+            reports.openProject(p, scopeTaskID: foreign)
+            #expect(reports.scopeTaskID == root)
+            reports.clearTaskFilter()
+            #expect(reports.period == .thisMonth && reports.returnToWeek != nil)
+            reports.refresh(now: 1_710_000_004, calendar: calendar)
+            #expect(Set(try #require(reports.project).tasks.map(\.id)) == Set([root, child, sibling]))
+            #expect(reports.project?.scopeTask == nil)
+            reports.backToWeek()
+            #expect(reports.weekAnchor == 1_710_000_000 && reports.includeArchived)
+        }
+    }
+
+    @Test func archivedScopeAndProjectionFailureNeverShowStaleResults() async throws {
+        try await withTrack { track, _ in
+            let p = try await project(track), leaf = try await task(track, project: p)
+            _ = try await track.workspace.submit(.setArchived(id: p, archived: true),
+                                                  expectedRevision: #require(track.workspace.snapshot).revision)
+            let reports = ReportsPresentation(track: track)
+            reports.openProject(p, scopeTaskID: leaf)
+            #expect(reports.includeArchived && reports.scopeTaskID == leaf)
+            let calendar = Calendar(identifier: .gregorian)
+            reports.refresh(now: 1_710_000_000, calendar: calendar)
+            #expect(reports.project?.scopeTask?.id == leaf)
+            reports.applyCustom(first: DateComponents(year: 2024, month: 2, day: 31),
+                                last: DateComponents(year: 2024, month: 3, day: 2))
+            reports.refresh(now: 1_710_000_000, calendar: calendar)
+            #expect(reports.project == nil && reports.projectAmount == nil && reports.taskAmounts.isEmpty)
+            #expect(reports.error != nil)
+            await track.workspace.close()
+            reports.refresh(now: 1_710_000_000, calendar: calendar)
+            #expect(reports.project == nil && reports.week == nil)
+        }
+    }
+
+    @Test func totalTimeDoesNotWrapHoursOrRoundPartialMinutes() {
+        #expect(ReportFormatting.totalTime(seconds: 0) == "00:00")
+        #expect(ReportFormatting.totalTime(seconds: 59) == "00:00")
+        #expect(ReportFormatting.totalTime(seconds: 3661) == "01:01")
+        #expect(ReportFormatting.totalTime(seconds: 360_060) == "100:01")
+        #expect(ReportFormatting.totalTime(seconds: .max) == "2562047788015215:30")
     }
 }

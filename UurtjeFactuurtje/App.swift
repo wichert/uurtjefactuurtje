@@ -5,7 +5,7 @@ import AppKit
     @NSApplicationDelegateAdaptor(Lifecycle.self) private var delegate
     var body: some Scene {
         Window("UurtjeFactuurtje", id: "workspace") {
-            WorkspaceView(host: delegate.host) { ReportsView(presentation: delegate.host.track) }
+            WorkspaceView(host: delegate.host) { ReportsView(reports: delegate.host.reports) }
                 .disabled(delegate.host.quitAttempt != nil)
                 .frame(minWidth: 720, minHeight: 450)
                 .overlay {
