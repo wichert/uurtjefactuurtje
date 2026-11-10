@@ -36,7 +36,7 @@ public enum SnapshotValidator {
             return [Violation(.duplicateID)]
         }
         var errors: [Violation] = []
-        if snapshot.schemaVersion != 1 || snapshot.revision < 0 { errors.append(Violation(.metadata)) }
+        if snapshot.schemaVersion != 2 || snapshot.revision < 0 { errors.append(Violation(.metadata)) }
         let projects = Dictionary(uniqueKeysWithValues: snapshot.projects.map { ($0.id, $0) })
         let tasks = Dictionary(uniqueKeysWithValues: snapshot.tasks.map { ($0.id, $0) })
         let currencies = Set(Locale.commonISOCurrencyCodes)
@@ -50,7 +50,7 @@ public enum SnapshotValidator {
         var siblings: [SiblingKey: [UUID]] = [:]
         for task in snapshot.tasks {
             if !validName(task.name) || projects[task.projectID] == nil
-                || task.budgetSeconds.map({ $0 <= 0 }) == true {
+                || task.budgetMinutes.map({ $0 <= 0 }) == true {
                 errors.append(Violation(.task, task.id))
             }
             siblings[SiblingKey(project: task.projectID, parent: task.parentTaskID,
@@ -144,12 +144,12 @@ public enum SnapshotValidator {
         if includingBudgets && errors.isEmpty {
             do {
                 for allocation in try BudgetRules.allocations(in: snapshot)
-                    where allocation.allocatedSeconds > Decimal(allocation.limitSeconds) {
+                    where allocation.allocatedMinutes > Decimal(allocation.limitMinutes) {
                     errors.append(Violation(.allocation, allocation.taskID))
                 }
                 let totals = try BudgetRules.usage(in: snapshot)
                 for task in snapshot.tasks where task.lastWarnedThreshold != BudgetRules.band(
-                    used: totals[task.id, default: 0], budget: task.budgetSeconds) {
+                    used: totals[task.id, default: 0], budget: task.budgetMinutes) {
                     errors.append(Violation(.warning, task.id))
                 }
             } catch let LibraryError.invalid(violations) { errors += violations }

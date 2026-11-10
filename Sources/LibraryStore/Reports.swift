@@ -156,6 +156,7 @@ public struct CurrencyAmount: Equatable, Sendable {
 
 public struct ProjectReport: Equatable, Sendable {
     public let project: Project
+    public let scopeTask: TaskRecord?
     public let bounds: ReportBounds?
     public let timeZoneIdentifier: String
     public let tasks: [TaskRecord]
@@ -256,12 +257,32 @@ public enum ReportProjection {
 
     public static func project(_ projectID: UUID, in snapshot: LibrarySnapshot,
                                bounds: ReportBounds?, calendar: Calendar,
-                               liveEnd: Int64? = nil) throws -> ProjectReport {
+                               liveEnd: Int64? = nil, scopeTaskID: UUID? = nil) throws -> ProjectReport {
         guard let project = snapshot.projects.first(where: { $0.id == projectID }) else {
             throw ReportError.unavailableProject
         }
         let prepared = try Prepared(snapshot, liveEnd: liveEnd)
-        let tasks = snapshot.tasks.filter { $0.projectID == projectID }.sorted {
+        let scopeTask: TaskRecord?
+        var included = Set(snapshot.tasks.filter { $0.projectID == projectID }.map(\.id))
+        if let scopeTaskID {
+            guard let task = prepared.tasks[scopeTaskID], task.projectID == projectID else {
+                throw ReportError.invalidHierarchy
+            }
+            scopeTask = task
+            let children = Dictionary(grouping: snapshot.tasks.compactMap { task in
+                task.parentTaskID.map { (parent: $0, child: task.id) }
+            }, by: \.parent)
+            var queue = [scopeTaskID]
+            included = [scopeTaskID]
+            var index = 0
+            while index < queue.count {
+                for child in children[queue[index], default: []] {
+                    if included.insert(child.child).inserted { queue.append(child.child) }
+                }
+                index += 1
+            }
+        } else { scopeTask = nil }
+        let tasks = snapshot.tasks.filter { included.contains($0.id) }.sorted {
             ordered(($0.name, $0.id), ($1.name, $1.id))
         }
         var totals = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, ReportValue.zero) })
@@ -270,15 +291,15 @@ public enum ReportProjection {
             .map { ($0.id, [ReportEntryRow]()) })
         var total = ReportValue.zero
         var hasOpen = false
-        for original in prepared.rows where prepared.tasks[original.entry.taskID]?.projectID == projectID {
+        for original in prepared.rows where included.contains(original.entry.taskID) {
             guard let row = try prepared.clipped(original, to: bounds) else { continue }
             total = try total.adding(value(row))
             totals[row.entry.taskID] = try totals[row.entry.taskID, default: .zero].adding(value(row))
             rows[row.entry.taskID, default: []].append(row)
             hasOpen = hasOpen || row.isProvisional
         }
-        for id in prepared.bottomUp where totals[id] != nil {
-            if let parent = prepared.tasks[id]?.parentTaskID {
+        for id in prepared.bottomUp where included.contains(id) {
+            if let parent = prepared.tasks[id]?.parentTaskID, included.contains(parent) {
                 totals[parent] = try totals[parent, default: .zero].adding(totals[id]!)
             }
         }
@@ -289,13 +310,15 @@ public enum ReportProjection {
                 return a == b ? $0.id.uuidString < $1.id.uuidString : a < b
             }
         }
-        let usage = try BudgetRules.usage(in: snapshot, liveEnd: liveEnd).filter { totals[$0.key] != nil }
+        let usage = try BudgetRules.usage(in: snapshot, liveEnd: liveEnd)
+            .filter { included.contains($0.key) }
         let bands = Dictionary(uniqueKeysWithValues: tasks.map {
-            ($0.id, BudgetRules.band(used: usage[$0.id, default: 0], budget: $0.budgetSeconds))
+            ($0.id, BudgetRules.band(used: usage[$0.id, default: 0], budget: $0.budgetMinutes))
         })
-        return ProjectReport(project: project, bounds: bounds, timeZoneIdentifier: calendar.timeZone.identifier,
-                             tasks: tasks, total: total, taskTotals: totals, lifetimeUsage: usage,
-                             displayBands: bands, entriesByLeaf: rows, hasOpenEntry: hasOpen)
+        return ProjectReport(project: project, scopeTask: scopeTask, bounds: bounds,
+            timeZoneIdentifier: calendar.timeZone.identifier, tasks: tasks, total: total,
+            taskTotals: totals, lifetimeUsage: usage, displayBands: bands,
+            entriesByLeaf: rows, hasOpenEntry: hasOpen)
     }
 
     public static func week(in snapshot: LibrarySnapshot, containing: Int64, calendar: Calendar,

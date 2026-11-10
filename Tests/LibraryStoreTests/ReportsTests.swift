@@ -15,7 +15,7 @@ private struct ReportFixture {
 
     func state(_ entries: [TimeEntry] = [], active: ActiveTimer? = nil,
                pending: [PendingSleepInterval] = []) -> LibrarySnapshot {
-        LibrarySnapshot(schemaVersion: 1, revision: 7, projects: [project()],
+        LibrarySnapshot(schemaVersion: 2, revision: 7, projects: [project()],
             tasks: [TaskRecord(id: leafID, projectID: projectID, name: "Leaf")],
             entries: entries, activeTimer: active, pendingSleepIntervals: pending)
     }
@@ -200,19 +200,19 @@ private func reportInstant(_ text: String) -> Int64 {
         let f = ReportFixture(), chain = (0..<40).map { _ in UUID() }, unused = UUID()
         let tasks = chain.enumerated().map { index, id in
             TaskRecord(id: id, projectID: f.projectID, parentTaskID: index == 0 ? nil : chain[index - 1],
-                       name: "Level \(index)", budgetSeconds: index == 0 ? 100 : nil,
+                       name: "Level \(index)", budgetMinutes: index == 0 ? 2 : nil,
                        lastWarnedThreshold: index == 0 ? .eighty : .none)
         } + [TaskRecord(id: unused, projectID: f.projectID, name: "Unused")]
-        let rows = [TimeEntry(id: UUID(), taskID: chain.last!, startAt: 0, endAt: 60),
+        let rows = [TimeEntry(id: UUID(), taskID: chain.last!, startAt: 0, endAt: 66),
                     TimeEntry(id: UUID(), taskID: chain.last!, startAt: 100, endAt: 130)]
-        let state = LibrarySnapshot(schemaVersion: 1, revision: 9, projects: [f.project()], tasks: tasks,
+        let state = LibrarySnapshot(schemaVersion: 2, revision: 9, projects: [f.project()], tasks: tasks,
                                    entries: rows, activeTimer: nil, pendingSleepIntervals: [])
         let before = state
         let report = try ReportProjection.project(f.projectID, in: state, bounds: ReportBounds(start: 100, end: 130), calendar: reportCalendar())
         #expect(report.total.totalSeconds == 30)
         for id in chain {
             #expect(report.taskTotals[id]?.totalSeconds == 30)
-            #expect(report.lifetimeUsage[id] == 90)
+            #expect(report.lifetimeUsage[id] == 96)
         }
         #expect(report.taskTotals[unused] == .zero && report.lifetimeUsage[unused] == 0)
         #expect(Set(report.tasks.map(\.id)) == Set(tasks.map(\.id)))
@@ -225,7 +225,7 @@ private func reportInstant(_ text: String) -> Int64 {
         let f = ReportFixture(), archived = Project(id: UUID(), name: "Archive", hourlyRate: 1, currencyCode: "USD", isArchived: true)
         let archivedTask = TaskRecord(id: UUID(), projectID: archived.id, name: "Old")
         let midnight = reportInstant("2024-04-02T00:00:00Z")
-        let state = LibrarySnapshot(schemaVersion: 1, revision: 0, projects: [f.project(), archived],
+        let state = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: [f.project(), archived],
             tasks: [TaskRecord(id: f.leafID, projectID: f.projectID, name: "Leaf"), archivedTask],
             entries: [f.row(midnight - 10, midnight + 20), TimeEntry(id: UUID(), taskID: archivedTask.id, startAt: midnight + 20, endAt: midnight + 50)],
             activeTimer: nil, pendingSleepIntervals: [])
@@ -242,7 +242,7 @@ private func reportInstant(_ text: String) -> Int64 {
         #expect(all.days.allSatisfy { $0.projects.count == 2 })
         let empty = try ReportProjection.week(in: f.state(), containing: midnight, calendar: reportCalendar())
         #expect(empty.days.count == 7 && empty.total == .zero && empty.projectTotals[f.projectID] == .zero)
-        let noProjects = LibrarySnapshot(schemaVersion: 1, revision: 0, projects: [], tasks: [], entries: [], activeTimer: nil, pendingSleepIntervals: [])
+        let noProjects = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: [], tasks: [], entries: [], activeTimer: nil, pendingSleepIntervals: [])
         #expect(try ReportProjection.week(in: noProjects, containing: midnight, calendar: reportCalendar()).days.count == 7)
         #expect(try ReportProjection.project(f.projectID, in: f.state(), bounds: nil, calendar: reportCalendar()).total == .zero)
     }
@@ -253,7 +253,7 @@ private func reportInstant(_ text: String) -> Int64 {
             try ReportProjection.project(UUID(), in: f.state(), bounds: nil, calendar: calendar)
         }
         for parent in [f.leafID, UUID()] {
-            let invalid = LibrarySnapshot(schemaVersion: 1, revision: 0, projects: [f.project()],
+            let invalid = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: [f.project()],
                 tasks: [TaskRecord(id: f.leafID, projectID: f.projectID, parentTaskID: parent, name: "Invalid")],
                 entries: [], activeTimer: nil, pendingSleepIntervals: [])
             #expect(throws: ReportError.invalidHierarchy) {
@@ -314,7 +314,7 @@ private func reportInstant(_ text: String) -> Int64 {
                         Project(id: UUID(), name: "C", hourlyRate: 18, currencyCode: "EUR"),
                         Project(id: UUID(), name: "D", hourlyRate: 1800, currencyCode: "JPY")]
         let tasks = projects.map { TaskRecord(id: UUID(), projectID: $0.id, name: "Task") }
-        let state = LibrarySnapshot(schemaVersion: 1, revision: 0, projects: projects, tasks: tasks,
+        let state = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: projects, tasks: tasks,
             entries: tasks.enumerated().map { index, task in
                 TimeEntry(id: UUID(), taskID: task.id, startAt: Int64(index), endAt: Int64(index + 1))
             }, activeTimer: nil, pendingSleepIntervals: [])
@@ -358,5 +358,108 @@ private func reportInstant(_ text: String) -> Int64 {
         #expect(skipped.total == pendingReport.total)
         #expect(includedState.pendingSleepIntervals.isEmpty && skippedState.pendingSleepIntervals.isEmpty)
         #expect(state == before)
+    }
+}
+
+extension ReportsTests {
+    @Test func subtreeScopeFiltersEveryProjectionAndStopsAtScopeRoot() throws {
+        let p = UUID(), otherProject = UUID(), root = UUID(), scope = UUID()
+        let leaf = UUID(), sibling = UUID(), outsider = UUID(), open = UUID()
+        let project = Project(id: p, name: "Client", hourlyRate: 60, currencyCode: "EUR")
+        let tasks = [
+            TaskRecord(id: root, projectID: p, name: "Root"),
+            TaskRecord(id: scope, projectID: p, parentTaskID: root, name: "Scope", budgetMinutes: 1),
+            TaskRecord(id: leaf, projectID: p, parentTaskID: scope, name: "Leaf"),
+            TaskRecord(id: sibling, projectID: p, parentTaskID: root, name: "Sibling"),
+            TaskRecord(id: outsider, projectID: otherProject, name: "Other")
+        ]
+        let state = LibrarySnapshot(schemaVersion: 2, revision: 9,
+            projects: [project, Project(id: otherProject, name: "Other", hourlyRate: 1, currencyCode: "USD")],
+            tasks: tasks,
+            entries: [TimeEntry(id: UUID(), taskID: leaf, startAt: 0, endAt: 30),
+                      TimeEntry(id: UUID(), taskID: sibling, startAt: 40, endAt: 50),
+                      TimeEntry(id: open, taskID: leaf, startAt: 100, endAt: nil)],
+            activeTimer: ActiveTimer(entryID: open, checkpointAt: 110),
+            pendingSleepIntervals: [PendingSleepInterval(id: UUID(), taskID: leaf, sleepAt: 60, wakeAt: 90)])
+        let bounds = try ReportBounds(start: 20, end: 120)
+        let report = try ReportProjection.project(p, in: state, bounds: bounds,
+            calendar: reportCalendar(), liveEnd: 120, scopeTaskID: scope)
+        #expect(report.project == project && report.scopeTask?.id == scope)
+        #expect(report.bounds == bounds && report.timeZoneIdentifier == reportCalendar().timeZone.identifier)
+        #expect(Set(report.tasks.map(\.id)) == [scope, leaf])
+        #expect(report.total == ReportValue(closedSeconds: 10, provisionalSeconds: 20, totalSeconds: 30))
+        #expect(report.taskTotals[scope] == report.total && report.taskTotals[leaf] == report.total)
+        #expect(Set(report.taskTotals.keys) == [scope, leaf])
+        #expect(report.lifetimeUsage == [scope: Decimal(50), leaf: Decimal(50)])
+        #expect(report.displayBands == [scope: .eighty, leaf: .none])
+        #expect(Set(report.entriesByLeaf.keys) == [leaf])
+        #expect(report.entriesByLeaf[leaf]?.map(\.seconds) == [10, 20])
+        #expect(report.hasOpenEntry && state.revision == 9)
+        let siblingReport = try ReportProjection.project(p, in: state, bounds: nil,
+            calendar: reportCalendar(), liveEnd: 120, scopeTaskID: sibling)
+        #expect(!siblingReport.hasOpenEntry && siblingReport.total.closedSeconds == 10)
+        #expect(siblingReport.taskTotals.count == 1 && siblingReport.lifetimeUsage[sibling] == 10)
+        let whole = try ReportProjection.project(p, in: state, bounds: nil, calendar: reportCalendar(), liveEnd: 120)
+        #expect(whole.scopeTask == nil && whole.total.totalSeconds == 60)
+        for invalid in [UUID(), outsider] {
+            #expect(throws: ReportError.invalidHierarchy) {
+                try ReportProjection.project(p, in: state, bounds: nil,
+                    calendar: reportCalendar(), scopeTaskID: invalid)
+            }
+        }
+    }
+}
+
+extension ReportsTests {
+    @Test func scopedEmptyArchivedAndZeroLengthProvisionalRows() throws {
+        let p = UUID(), empty = UUID(), leaf = UUID(), open = UUID()
+        let project = Project(id: p, name: "Archive", hourlyRate: 1, currencyCode: "EUR", isArchived: true)
+        let tasks = [TaskRecord(id: empty, projectID: p, name: "Empty"),
+                     TaskRecord(id: leaf, projectID: p, name: "Leaf")]
+        let archived = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: [project], tasks: tasks,
+            entries: [TimeEntry(id: UUID(), taskID: leaf, startAt: 0, endAt: 10)],
+            activeTimer: nil, pendingSleepIntervals: [])
+        let report = try ReportProjection.project(p, in: archived, bounds: nil,
+            calendar: reportCalendar(), scopeTaskID: empty)
+        #expect(report.project.isArchived && report.scopeTask?.id == empty)
+        #expect(report.total == .zero && report.taskTotals == [empty: .zero])
+        #expect(report.lifetimeUsage == [empty: 0] && report.displayBands == [empty: .none])
+        #expect(report.entriesByLeaf == [empty: []] && !report.hasOpenEntry)
+        let historical = try ReportProjection.project(p, in: archived, bounds: nil,
+            calendar: reportCalendar(), scopeTaskID: leaf)
+        #expect(historical.project.isArchived && historical.total.closedSeconds == 10)
+        let live = LibrarySnapshot(schemaVersion: 2, revision: 0,
+            projects: [Project(id: p, name: "Client", hourlyRate: 1, currencyCode: "EUR")], tasks: tasks,
+            entries: [TimeEntry(id: open, taskID: leaf, startAt: 100, endAt: nil)],
+            activeTimer: ActiveTimer(entryID: open, checkpointAt: 100), pendingSleepIntervals: [])
+        let included = try ReportProjection.project(p, in: live, bounds: ReportBounds(start: 100, end: 110),
+            calendar: reportCalendar(), scopeTaskID: leaf)
+        #expect(included.total == .zero && included.hasOpenEntry)
+        #expect(included.entriesByLeaf[leaf]?.map(\.id) == [open])
+        let excluded = try ReportProjection.project(p, in: live, bounds: ReportBounds(start: 90, end: 100),
+            calendar: reportCalendar(), scopeTaskID: leaf)
+        #expect(excluded.total == .zero && !excluded.hasOpenEntry)
+        #expect(excluded.entriesByLeaf[leaf]?.isEmpty == true)
+    }
+
+    @Test func scopedCheckedOverflowOccursOnlyForIncludedAggregate() throws {
+        let p = UUID(), scope = UUID(), outside = UUID()
+        let tasks = [TaskRecord(id: scope, projectID: p, name: "Selected"),
+                     TaskRecord(id: outside, projectID: p, name: "Outside")]
+        let rows = [TimeEntry(id: UUID(), taskID: outside, startAt: .min, endAt: -1),
+                    TimeEntry(id: UUID(), taskID: outside, startAt: -1, endAt: .max - 1)]
+        let state = LibrarySnapshot(schemaVersion: 2, revision: 0,
+            projects: [Project(id: p, name: "Client", hourlyRate: 1, currencyCode: "EUR")], tasks: tasks,
+            entries: rows, activeTimer: nil, pendingSleepIntervals: [])
+        #expect(SnapshotValidator.violations(in: state).isEmpty)
+        let selected = try ReportProjection.project(p, in: state, bounds: nil,
+            calendar: reportCalendar(), scopeTaskID: scope)
+        #expect(selected.total == .zero && selected.entriesByLeaf[scope]?.isEmpty == true)
+        #expect(throws: ReportError.intervalOverflow) {
+            try ReportProjection.project(p, in: state, bounds: nil, calendar: reportCalendar(), scopeTaskID: outside)
+        }
+        #expect(throws: ReportError.intervalOverflow) {
+            try ReportProjection.project(p, in: state, bounds: nil, calendar: reportCalendar())
+        }
     }
 }

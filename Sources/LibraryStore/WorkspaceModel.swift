@@ -37,6 +37,10 @@ struct WorkspaceOperations: Sendable {
     var createTask: @Sendable (Library, TaskCreationRequest, Int64, UUID?, Int64?) async throws -> TaskCreation = {
         try await $0.createTaskOwned($1, expectedRevision: $2, ownedTimerEntryID: $3, instant: $4)
     }
+    var createBudgetTask: @Sendable (Library, TaskCreationRequest, Int64, UUID, Int64) async throws -> TaskCreation = {
+        try await $0.createTaskOwned($1, expectedRevision: $2, ownedTimerEntryID: $3,
+                                     instant: nil, checkpointAt: $4)
+    }
     var close: @Sendable (Library) async -> Void = { await $0.close() }
 }
 
@@ -98,13 +102,13 @@ struct WorkspaceOperations: Sendable {
     }
 
     public func projectReport(_ projectID: UUID, period: ReportPeriod, calendar: Calendar,
-                              firstWeekday: Int = 2) throws -> ProjectReport {
+                              firstWeekday: Int = 2, scopeTaskID: UUID? = nil) throws -> ProjectReport {
         guard let snapshot else { throw LibraryAccessError.unavailable }
         let sample = try timerLifecycleGate.sample(allowSleeping: true, clock: timerClock)
         let bounds = try ReportCalendar.bounds(for: period, now: sample.instant,
                                                calendar: calendar, firstWeekday: firstWeekday)
         return try ReportProjection.project(projectID, in: snapshot, bounds: bounds, calendar: calendar,
-                                            liveEnd: safeLiveEnd(in: snapshot, sample: sample))
+            liveEnd: safeLiveEnd(in: snapshot, sample: sample), scopeTaskID: scopeTaskID)
     }
 
     public func weeklyReport(containing: Int64, calendar: Calendar, firstWeekday: Int = 2,
@@ -482,34 +486,61 @@ struct WorkspaceOperations: Sendable {
     public func enqueueTaskCreation(_ request: TaskCreationRequest, expectedRevision: Int64,
                                     reviewedSnapshot: LibrarySnapshot? = nil) -> Task<TaskCreation, Error> {
         guard !Task.isCancelled else { return rejected(CancellationError()) }
-        guard !closing, state == .ready || state == .reviewRequired else { return rejected(LibraryAccessError.unavailable) }
+        guard !closing, state == .ready || state == .reviewRequired else {
+            return rejected(LibraryAccessError.unavailable)
+        }
         let generation = timerLifecycleGate.state().generation
         return enqueue {
             guard let library = self.library, let before = self.snapshot,
-                  self.state == .ready || self.state == .reviewRequired else { throw LibraryAccessError.unavailable }
+                  self.state == .ready || self.state == .reviewRequired else {
+                throw LibraryAccessError.unavailable
+            }
             if let reviewedSnapshot, !reviewedSnapshot.editorRelevantEquals(before) {
                 self.issue = .revisionConflict
                 throw EditorReviewError.changed
             }
             let revision = reviewedSnapshot == nil ? expectedRevision : before.revision
-            var instant: Int64?
+            var sampledBudgetWrite = false
             do {
+                var instant: Int64?
+                var checkpointAt: Int64?
                 if request.start {
                     guard before.pendingSleepIntervals.isEmpty,
                           before.activeTimer == nil || before.activeTimer?.entryID == self.ownedTimerEntryID,
                           !self.timerPaused else { throw TimerError.reviewRequired }
                     let sample = try self.timerLifecycleGate.sample(clock: self.timerClock)
-                    guard sample.generation == generation else { throw TimerError.reviewRequired }
+                    let gate = self.timerLifecycleGate.state()
+                    guard sample.generation == generation, gate.generation == sample.generation,
+                          !gate.sleeping else { throw TimerError.reviewRequired }
                     instant = sample.instant
+                } else if request.budgetMinutes != nil,
+                          let owned = self.ownedTimerEntryID, before.activeTimer?.entryID == owned,
+                          !self.timerPaused, !self.timerLifecycleGate.state().sleeping {
+                    let sample = try self.timerLifecycleGate.sample(clock: self.timerClock)
+                    let gate = self.timerLifecycleGate.state()
+                    guard sample.generation == generation, gate.generation == sample.generation,
+                          !gate.sleeping else { throw TimerError.reviewRequired }
+                    if let active = before.activeTimer, sample.instant < active.checkpointAt {
+                        throw TimerError.clockRollback
+                    }
+                    checkpointAt = sample.instant
                 }
-                let result = try await self.operations.createTask(library, request, revision,
+                let result: TaskCreation
+                if let checkpointAt, let owned = self.ownedTimerEntryID {
+                    sampledBudgetWrite = true
+                    result = try await self.operations.createBudgetTask(library, request, revision,
+                                                                         owned, checkpointAt)
+                } else {
+                    result = try await self.operations.createTask(library, request, revision,
                                                                   self.ownedTimerEntryID, instant)
+                }
                 if request.start { self.ownedTimerEntryID = result.snapshot.activeTimer?.entryID }
                 self.setConfirmed(result.snapshot)
                 self.issue = nil
                 return result
             } catch {
-                if request.start, (error is StorageError || error is LibraryAccessError || (error as? TimerError) == .clockRollback) {
+                if sampledBudgetWrite || (error as? TimerError) == .clockRollback ||
+                    (request.start && (error is StorageError || error is LibraryAccessError)) {
                     self.timerPaused = before.activeTimer != nil
                 }
                 await self.handleMigrationError(error, library: library)

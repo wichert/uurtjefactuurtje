@@ -483,3 +483,62 @@ private final class PublicationLatch: @unchecked Sendable {
     }
     func resume() { condition.withLock { mayLeave = true; condition.broadcast() } }
 }
+
+private func seedRecoveryV1(_ root: URL) throws -> (UUID, UUID, UUID) {
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let url = root.appendingPathComponent("library.sqlite")
+    try createProductionV1(url)
+    let p = UUID(), task = UUID(), entry = UUID()
+    var db: OpaquePointer?
+    let rc = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE, nil)
+    guard rc == SQLITE_OK, let db else { throw StorageError.sqlite(rc, "seed v1") }
+    defer { sqlite3_close_v2(db) }
+    let sql = """
+        INSERT INTO projects VALUES ('\(p.uuidString.lowercased())','Client','1','EUR',0);
+        INSERT INTO tasks VALUES ('\(task.uuidString.lowercased())','\(p.uuidString.lowercased())',NULL,'Work',1,100);
+        INSERT INTO time_entries VALUES ('\(entry.uuidString.lowercased())','\(task.uuidString.lowercased())',0,1);
+        """
+    let result = sqlite3_exec(db, sql, nil, nil, nil)
+    guard result == SQLITE_OK else { throw StorageError.sqlite(result, String(cString: sqlite3_errmsg(db))) }
+    return (p, task, entry)
+}
+
+extension RecoveryTests {
+    @Test func productionV1ThrownFaultAndAbruptDeathMatrices() async throws {
+        let readyIndex = try #require(RecoveryPoint.allCases.firstIndex(of: .ready))
+        for (index, point) in RecoveryPoint.allCases.enumerated() {
+            for crash in [false, true] {
+                let root = temporaryLibrary()
+                defer { try? FileManager.default.removeItem(at: root) }
+                let (project, task, entry) = try seedRecoveryV1(root)
+                let main = root.appendingPathComponent("library.sqlite")
+                let original = try Data(contentsOf: main)
+                if crash {
+                    #expect(try subprocess(root, action: "crash", point: point.rawValue) == 86)
+                } else {
+                    let hooks = RecoveryHooks(recovery: { if $0 == point { throw RecoveryTestError.injected } })
+                    await expectFailure { try await Library.open(at: root, hooks: hooks) }
+                }
+                if index <= readyIndex { #expect(try Data(contentsOf: main) == original) }
+                let candidate = root.appendingPathComponent(".recovery-work/candidate/library.sqlite")
+                let readyBytes: Data? = index >= readyIndex && FileManager.default.fileExists(atPath: candidate.path)
+                    ? try Data(contentsOf: candidate) : nil
+                let recovered = try await Library.open(at: root)
+                let state = try await recovered.snapshot()
+                #expect(state.schemaVersion == 2 && state.revision == 7)
+                #expect(state.projects.map(\.id) == [project])
+                #expect(state.tasks.first?.id == task && state.tasks.first?.budgetMinutes == 1)
+                #expect(state.tasks.first?.lastWarnedThreshold == WarningThreshold.none)
+                #expect(state.entries == [TimeEntry(id: entry, taskID: task, startAt: 0, endAt: 1)])
+                #expect(state.activeTimer == nil && state.pendingSleepIntervals.isEmpty)
+                await recovered.close()
+                let published = try Data(contentsOf: main)
+                if let readyBytes { #expect(published == readyBytes) }
+                let next = try await Library.open(at: root)
+                #expect(try await next.snapshot() == state)
+                await next.close()
+                #expect(try Data(contentsOf: main) == published)
+            }
+        }
+    }
+}

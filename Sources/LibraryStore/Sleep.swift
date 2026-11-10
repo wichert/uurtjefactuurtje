@@ -85,8 +85,8 @@ public enum SleepPlanner {
         let totals = try BudgetRules.usage(in: virtual)
         let tasks = state.tasks.map {
             TaskRecord(id: $0.id, projectID: $0.projectID, parentTaskID: $0.parentTaskID, name: $0.name,
-                budgetSeconds: $0.budgetSeconds,
-                lastWarnedThreshold: BudgetRules.band(used: totals[$0.id, default: 0], budget: $0.budgetSeconds))
+                budgetMinutes: $0.budgetMinutes,
+                lastWarnedThreshold: BudgetRules.band(used: totals[$0.id, default: 0], budget: $0.budgetMinutes))
         }
         return LibrarySnapshot(schemaVersion: virtual.schemaVersion, revision: virtual.revision,
             projects: virtual.projects, tasks: tasks, entries: virtual.entries, activeTimer: nil,

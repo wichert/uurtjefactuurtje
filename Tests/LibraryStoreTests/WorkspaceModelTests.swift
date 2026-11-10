@@ -36,27 +36,27 @@ private actor WorkspaceTestGate {
         let parent = UUID()
         var value = try #require(model.snapshot)
         value = try await model.submit(.createTask(id: parent, projectID: fixture.project, parentID: nil,
-            name: "Budget root", budgetSeconds: 100), expectedRevision: value.revision)
+            name: "Budget root", budgetMinutes: 100), expectedRevision: value.revision)
         let leaf = UUID()
         value = try await model.submit(.createTask(id: leaf, projectID: fixture.project, parentID: parent,
-            name: "Budget leaf", budgetSeconds: 100), expectedRevision: value.revision)
+            name: "Budget leaf", budgetMinutes: 100), expectedRevision: value.revision)
         fixture.clock.set(1000)
         let started = try await model.enqueueTimer(.start(taskID: leaf)).value
         fixture.clock.set(999)
         #expect(try model.timerElapsedSeconds() == 0)
         #expect(try model.budgetUsage()[parent] == 0)
         #expect(model.snapshot == started)
-        fixture.clock.set(1080)
+        fixture.clock.set(5800)
         let reads = fixture.clock.reads
-        #expect(try model.timerElapsedSeconds() == 80)
-        #expect(try model.budgetUsage()[parent] == 80)
+        #expect(try model.timerElapsedSeconds() == 4800)
+        #expect(try model.budgetUsage()[parent] == 4800)
         #expect(model.snapshot == started)
         #expect(model.budgetWarnings.isEmpty)
         #expect(fixture.clock.reads == reads + 2)
-        let saved = try await model.submit(.editTask(id: leaf, name: "Saved", budgetSeconds: 80),
+        let saved = try await model.submit(.editTask(id: leaf, name: "Saved", budgetMinutes: 80),
                                            expectedRevision: started.revision)
         #expect(saved.revision == started.revision + 1)
-        #expect(saved.activeTimer?.checkpointAt == 1080)
+        #expect(saved.activeTimer?.checkpointAt == 5800)
         #expect(saved.tasks.first { $0.id == leaf }?.name == "Saved")
         let batch = try #require(model.budgetWarnings.first)
         #expect(batch.warnings.map(\.taskID) == [parent, leaf].sorted { $0.uuidString < $1.uuidString })
@@ -66,32 +66,32 @@ private actor WorkspaceTestGate {
         #expect(model.budgetWarnings.count == 1)
         model.dismissBudgetWarning(batch.id)
         let renamed = try await model.submit(.renameTask(id: leaf, name: "Rename only"), expectedRevision: saved.revision)
-        #expect(renamed.tasks.first { $0.id == leaf }?.budgetSeconds == 80)
-        let reset = try await model.submit(.editTask(id: leaf, name: "Unset", budgetSeconds: nil), expectedRevision: renamed.revision)
+        #expect(renamed.tasks.first { $0.id == leaf }?.budgetMinutes == 80)
+        let reset = try await model.submit(.editTask(id: leaf, name: "Unset", budgetMinutes: nil), expectedRevision: renamed.revision)
         #expect(model.budgetWarnings.isEmpty)
-        let enabled = try await model.submit(.editTask(id: leaf, name: "Enabled", budgetSeconds: 50), expectedRevision: reset.revision)
+        let enabled = try await model.submit(.editTask(id: leaf, name: "Enabled", budgetMinutes: 50), expectedRevision: reset.revision)
         #expect(model.budgetWarnings.count == 1)
         #expect(model.budgetWarnings[0].warnings == [BudgetWarning(taskID: leaf, threshold: .hundred)])
-        fixture.clock.set(1081)
+        fixture.clock.set(5860)
         do {
-            _ = try await model.submit(.editTask(id: leaf, name: "Too large", budgetSeconds: 101), expectedRevision: enabled.revision)
+            _ = try await model.submit(.editTask(id: leaf, name: "Too large", budgetMinutes: 101), expectedRevision: enabled.revision)
             Issue.record("allocation unexpectedly succeeded")
         } catch CommandError.budgetAllocation(let id, let allowance) {
             #expect(id == leaf)
             #expect(allowance.limitingAncestorID == parent)
-            #expect(allowance.maximumSeconds == 100)
+            #expect(allowance.maximumMinutes == 100)
         }
         #expect(model.snapshot == enabled)
         #expect(model.timerStatus == .paused(entryID: enabled.activeTimer!.entryID))
         let pausedReads = fixture.clock.reads
-        #expect(try model.timerElapsedSeconds() == 80)
-        #expect(try model.budgetUsage()[parent] == 80)
+        #expect(try model.timerElapsedSeconds() == 4800)
+        #expect(try model.budgetUsage()[parent] == 4800)
         #expect(fixture.clock.reads == pausedReads)
         await model.close()
         try await model.open()
         #expect(model.budgetWarnings.isEmpty)
-        #expect(try model.timerElapsedSeconds() == 80)
-        #expect(try model.budgetUsage()[leaf] == 80)
+        #expect(try model.timerElapsedSeconds() == 4800)
+        #expect(try model.budgetUsage()[leaf] == 4800)
         #expect(fixture.clock.reads == pausedReads)
         await fixture.dispose()
     }
@@ -105,8 +105,8 @@ private actor WorkspaceTestGate {
         let reads = fixture.clock.reads
         #expect(try model.timerElapsedSeconds() == 0)
         #expect(try model.budgetUsage()[fixture.first] == 0)
-        let first = model.enqueueSubmit(.editTask(id: fixture.first, name: "One", budgetSeconds: 1), expectedRevision: started.revision)
-        let stale = model.enqueueSubmit(.editTask(id: fixture.first, name: "Stale", budgetSeconds: 2), expectedRevision: started.revision)
+        let first = model.enqueueSubmit(.editTask(id: fixture.first, name: "One", budgetMinutes: 1), expectedRevision: started.revision)
+        let stale = model.enqueueSubmit(.editTask(id: fixture.first, name: "Stale", budgetMinutes: 2), expectedRevision: started.revision)
         let saved = try await first.value
         do { _ = try await stale.value; Issue.record("stale form succeeded") }
         catch StorageError.revisionConflict { }
@@ -134,11 +134,11 @@ private actor WorkspaceTestGate {
         try await model.open()
         let project = UUID(), leaf = UUID()
         _ = try await model.submit(.createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
-        _ = try await model.submit(.createTask(id: leaf, projectID: project, parentID: nil, name: "Leaf", budgetSeconds: 1), expectedRevision: 1)
+        _ = try await model.submit(.createTask(id: leaf, projectID: project, parentID: nil, name: "Leaf", budgetMinutes: 1), expectedRevision: 1)
         let started = try await model.enqueueTimer(.start(taskID: leaf)).value
         let rename = model.enqueueSubmit(.renameTask(id: leaf, name: "First"), expectedRevision: started.revision)
         await barrier.wait()
-        let edit = model.enqueueSubmit(.editTask(id: leaf, name: "Second", budgetSeconds: 2), expectedRevision: started.revision + 1)
+        let edit = model.enqueueSubmit(.editTask(id: leaf, name: "Second", budgetMinutes: 2), expectedRevision: started.revision + 1)
         let reads = clock.reads
         let gate = model.timerLifecycleGate
         let generation = await Task.detached { gate.latchSleep() }.value
@@ -174,9 +174,9 @@ private actor WorkspaceTestGate {
             _ = try await model.submit(.createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
             _ = try await model.submit(.createTask(id: leaf, projectID: project, parentID: nil, name: "Leaf"), expectedRevision: 1)
             let before = try await model.enqueueTimer(.start(taskID: leaf)).value
-            clock.set(1100)
+            clock.set(7000)
             do {
-                _ = try await model.submit(.editTask(id: leaf, name: "Crossed", budgetSeconds: 50), expectedRevision: before.revision)
+                _ = try await model.submit(.editTask(id: leaf, name: "Crossed", budgetMinutes: 50), expectedRevision: before.revision)
                 Issue.record("fault returned success")
             } catch { }
             #expect(model.snapshot == before)
@@ -941,11 +941,11 @@ extension WorkspaceModelTests {
     @Test func ignoresOnlyCheckpointBookkeeping() {
         let projectID = UUID(), taskID = UUID(), entryID = UUID(), pendingID = UUID()
         let project = Project(id: projectID, name: "Client", hourlyRate: 95, currencyCode: "EUR")
-        let task = TaskRecord(id: taskID, projectID: projectID, name: "Work", budgetSeconds: 3600)
+        let task = TaskRecord(id: taskID, projectID: projectID, name: "Work", budgetMinutes: 3600)
         let entry = TimeEntry(id: entryID, taskID: taskID, startAt: 100, endAt: nil)
         let timer = ActiveTimer(entryID: entryID, checkpointAt: 110)
         let pending = PendingSleepInterval(id: pendingID, taskID: taskID, sleepAt: 101, wakeAt: 102)
-        func snapshot(schema: Int64 = 1, revision: Int64 = 1,
+        func snapshot(schema: Int64 = 2, revision: Int64 = 1,
                       projects: [Project]? = nil, tasks: [TaskRecord]? = nil,
                       entries: [TimeEntry]? = nil, active: ActiveTimer? = nil,
                       stopped: Bool = false, intervals: [PendingSleepInterval]? = nil) -> LibrarySnapshot {
@@ -954,7 +954,7 @@ extension WorkspaceModelTests {
                 activeTimer: stopped ? nil : (active ?? timer), pendingSleepIntervals: intervals ?? [pending])
         }
         let base = snapshot()
-        let warning = TaskRecord(id: taskID, projectID: projectID, name: "Work", budgetSeconds: 3600,
+        let warning = TaskRecord(id: taskID, projectID: projectID, name: "Work", budgetMinutes: 3600,
                                  lastWarnedThreshold: .eighty)
         for harmless in [base, snapshot(revision: 2), snapshot(tasks: [warning]),
                          snapshot(active: ActiveTimer(entryID: entryID, checkpointAt: 120)),
@@ -970,11 +970,11 @@ extension WorkspaceModelTests {
             Project(id: projectID, name: "Client", hourlyRate: 95, currencyCode: "EUR", isArchived: true)
         ]
         let changedTasks = [
-            TaskRecord(id: UUID(), projectID: projectID, name: "Work", budgetSeconds: 3600),
-            TaskRecord(id: taskID, projectID: UUID(), name: "Work", budgetSeconds: 3600),
-            TaskRecord(id: taskID, projectID: projectID, parentTaskID: UUID(), name: "Work", budgetSeconds: 3600),
-            TaskRecord(id: taskID, projectID: projectID, name: "Renamed", budgetSeconds: 3600),
-            TaskRecord(id: taskID, projectID: projectID, name: "Work", budgetSeconds: nil)
+            TaskRecord(id: UUID(), projectID: projectID, name: "Work", budgetMinutes: 3600),
+            TaskRecord(id: taskID, projectID: UUID(), name: "Work", budgetMinutes: 3600),
+            TaskRecord(id: taskID, projectID: projectID, parentTaskID: UUID(), name: "Work", budgetMinutes: 3600),
+            TaskRecord(id: taskID, projectID: projectID, name: "Renamed", budgetMinutes: 3600),
+            TaskRecord(id: taskID, projectID: projectID, name: "Work", budgetMinutes: nil)
         ]
         let changedEntries = [
             TimeEntry(id: UUID(), taskID: taskID, startAt: 100, endAt: nil),
@@ -992,7 +992,7 @@ extension WorkspaceModelTests {
         let secondTask = TaskRecord(id: UUID(), projectID: projectID, name: "Other")
         let secondEntry = TimeEntry(id: UUID(), taskID: taskID, startAt: 1, endAt: 2)
         let secondPending = PendingSleepInterval(id: UUID(), taskID: taskID, sleepAt: 3, wakeAt: 4)
-        let changes = [snapshot(schema: 2), snapshot(stopped: true),
+        let changes = [snapshot(schema: 1), snapshot(stopped: true),
                        snapshot(active: ActiveTimer(entryID: UUID(), checkpointAt: 110)),
                        snapshot(projects: []), snapshot(tasks: []), snapshot(entries: []), snapshot(intervals: [])]
             + changedProjects.map { snapshot(projects: [$0]) }
@@ -1049,6 +1049,11 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
         await probe.write("createTask", revision: revision)
         return try await library.createTaskOwned(request, expectedRevision: revision,
                                                  ownedTimerEntryID: owned, instant: instant)
+    }
+    operations.createBudgetTask = { library, request, revision, owned, checkpoint in
+        await probe.write("createBudgetTask", revision: revision)
+        return try await library.createTaskOwned(request, expectedRevision: revision,
+            ownedTimerEntryID: owned, instant: nil, checkpointAt: checkpoint)
     }
     return operations
 }
@@ -1123,7 +1128,7 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
                 editor = Task { try await creation.value.snapshot }
             } else {
                 let command: WorkspaceCommand = path == "performBudget"
-                    ? .editTask(id: f.second, name: "Edited", budgetSeconds: 100)
+                    ? .editTask(id: f.second, name: "Edited", budgetMinutes: 100)
                     : .updateProject(id: f.project, name: "Edited", rate: 2, currency: "EUR", confirmedPreviousCurrency: nil)
                 editor = model.enqueueSubmit(command, expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
             }
@@ -1197,7 +1202,7 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
                     expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
                 editor = Task { try await work.value.snapshot }
             } else {
-                editor = model.enqueueSubmit(.editTask(id: f.first, name: "Must not save", budgetSeconds: 1),
+                editor = model.enqueueSubmit(.editTask(id: f.first, name: "Must not save", budgetMinutes: 1),
                                               expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
             }
             await gate.release()
@@ -1245,7 +1250,7 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
                     expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
                 editor = Task { try await work.value.snapshot }
             } else {
-                editor = model.enqueueSubmit(.editTask(id: f.first, name: "Must not save", budgetSeconds: 1),
+                editor = model.enqueueSubmit(.editTask(id: f.first, name: "Must not save", budgetMinutes: 1),
                                              expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
             }
             await #expect(throws: EditorReviewError.changed) { try await editor.value }
@@ -1483,5 +1488,294 @@ extension WorkspaceModelTests {
         }
 
         await fixture.dispose()
+    }
+}
+
+extension WorkspaceModelTests {
+    @Test func budgetedCreationCheckpointsOnceAndScopesThroughWorkspace() async throws {
+        let f = try await TimerFixture.make(), model = f.model
+        do {
+            let running = try await model.enqueueTimer(.start(taskID: f.first)).value
+            f.clock.set(160)
+            let reads = f.clock.reads
+            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: f.first,
+                name: "Budget child", budgetMinutes: 1, confirmMigration: true, start: false)
+            let result = try await model.enqueueTaskCreation(request, expectedRevision: running.revision,
+                                                            reviewedSnapshot: running).value
+            #expect(f.clock.reads == reads + 1)
+            #expect(result.snapshot.revision == running.revision + 1)
+            #expect(result.snapshot.activeTimer?.entryID == running.activeTimer?.entryID)
+            #expect(result.snapshot.activeTimer?.checkpointAt == 160)
+            #expect(result.snapshot.tasks.first { $0.id == request.id }?.budgetMinutes == 1)
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            let report = try model.projectReport(f.project, period: .allTime, calendar: calendar,
+                                                 scopeTaskID: request.id)
+            #expect(report.scopeTask?.id == request.id && report.total == .zero && !report.hasOpenEntry)
+            #expect(model.snapshot == result.snapshot)
+            await f.dispose()
+        } catch { await f.dispose(); throw error }
+    }
+
+    @Test func reviewedBudgetedCreationRebasesAfterCheckpointWithoutResamplingPredecessor() async throws {
+        let f = try await TimerFixture.make(), model = f.model, barrier = TimerTestBarrier()
+        do {
+            let reviewed = try await model.enqueueTimer(.start(taskID: f.first)).value
+            model.configureTimer(clock: { f.clock.read() }, write: { library, command, revision, instant, id in
+                await barrier.hold()
+                return try await library.performTimer(command, expectedRevision: revision, instant: instant, newEntryID: id)
+            })
+            f.clock.set(120)
+            let tick = model.enqueueTimer(.checkpoint)
+            await barrier.wait()
+            let reads = f.clock.reads
+            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+                name: "Budgeted", budgetMinutes: 30, confirmMigration: false, start: false)
+            let work = model.enqueueTaskCreation(request, expectedRevision: reviewed.revision,
+                                                 reviewedSnapshot: reviewed)
+            work.cancel()
+            f.clock.set(130)
+            await barrier.release()
+            let checkpoint = try await tick.value
+            let saved = try await work.value
+            #expect(reviewed.editorRelevantEquals(checkpoint))
+            #expect(saved.snapshot.revision == checkpoint.revision + 1)
+            #expect(saved.snapshot.activeTimer?.checkpointAt == 130)
+            #expect(f.clock.reads == reads + 1)
+            #expect(saved.snapshot.tasks.contains { $0.id == request.id && $0.budgetMinutes == 30 })
+            await f.dispose()
+        } catch { await barrier.release(); await f.dispose(); throw error }
+    }
+}
+
+extension EditorQueueTests {
+    @Test(arguments: [0, 1, 2])
+    func sampledCreationFailuresPauseAndNeverReplay(mode: Int) async throws {
+        let probe = EditorOperationProbe()
+        var operations = editorOperations(probe)
+        operations.createBudgetTask = { library, request, revision, owned, checkpoint in
+            await probe.write("createBudgetTask", revision: revision)
+            if mode == 0 { throw StorageError.injectedFailure }
+            if mode == 1 { throw StorageError.sqlite(1, "rejected creation") }
+            _ = try await library.createTaskOwned(request, expectedRevision: revision,
+                ownedTimerEntryID: owned, instant: nil, checkpointAt: checkpoint)
+            throw LibraryAccessError.publicationIndeterminate
+        }
+        let f = try await editorFixture(operations: operations)
+        do {
+            let model = f.model
+            let before = try await model.enqueueTimer(.start(taskID: f.first)).value
+            let entry = try #require(before.activeTimer?.entryID)
+            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+                name: "Once", budgetMinutes: 1, confirmMigration: false, start: false)
+            await probe.reset()
+            f.clock.set(160)
+            let reads = f.clock.reads
+            do { _ = try await model.enqueueTaskCreation(request, expectedRevision: before.revision).value
+                Issue.record("injected creation succeeded")
+            } catch { }
+            #expect(await probe.paths == ["createBudgetTask"])
+            #expect(await probe.revisions == [before.revision])
+            #expect(f.clock.reads == reads + 1)
+            #expect(model.snapshot == before && model.budgetWarnings.isEmpty)
+            #expect(model.timerStatus == .paused(entryID: entry) || model.availability == .blocked)
+            #expect(model.availability == (mode == 2 ? .blocked : .ready))
+            if mode == 2 {
+                await #expect(throws: LibraryAccessError.unavailable) {
+                    try await model.enqueueTaskCreation(request, expectedRevision: before.revision).value
+                }
+                #expect(await probe.paths == ["createBudgetTask"])
+            }
+            await model.close()
+            try await model.open()
+            let reopened = try #require(model.snapshot)
+            #expect(reopened.revision == before.revision + (mode == 2 ? 1 : 0))
+            #expect(reopened.tasks.filter { $0.id == request.id }.count == (mode == 2 ? 1 : 0))
+            #expect(reopened.activeTimer?.checkpointAt == (mode == 2 ? 160 : 100))
+            #expect(model.budgetWarnings.isEmpty)
+            #expect(await probe.paths == ["createBudgetTask"])
+            await f.dispose()
+        } catch { await f.dispose(); throw error }
+    }
+
+    @Test func creationAllocationFailureRollsBackCheckpointAndPauses() async throws {
+        let f = try await editorFixture(operations: editorOperations(EditorOperationProbe()))
+        do {
+            let model = f.model
+            let initial = try #require(model.snapshot)
+            _ = try await model.submit(.editTask(id: f.first, name: "First", budgetMinutes: 1),
+                                       expectedRevision: initial.revision)
+            let before = try await model.enqueueTimer(.start(taskID: f.first)).value
+            let id = try #require(before.activeTimer?.entryID)
+            f.clock.set(160)
+            let reads = f.clock.reads
+            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: f.first,
+                name: "Too large", budgetMinutes: 2, confirmMigration: true, start: false)
+            do {
+                _ = try await model.enqueueTaskCreation(request, expectedRevision: before.revision).value
+                Issue.record("allocation accepted")
+            } catch CommandError.budgetAllocation(let task, let allowance) {
+                #expect(task == request.id && allowance.maximumMinutes == 1)
+                #expect(allowance.limitingAncestorID == f.first)
+            }
+            #expect(f.clock.reads == reads + 1)
+            #expect(model.snapshot == before && model.budgetWarnings.isEmpty)
+            #expect(model.timerStatus == .paused(entryID: id))
+            await model.close()
+            try await model.open()
+            #expect(model.snapshot == before)
+            await f.dispose()
+        } catch { await f.dispose(); throw error }
+    }
+
+    @Test(arguments: [false, true])
+    func budgetCreationRejectsQueuedEditorOrGenerationChange(editorChange: Bool) async throws {
+        let probe = EditorOperationProbe(), barrier = TimerTestBarrier()
+        var operations = editorOperations(probe)
+        operations.performOwned = { library, command, revision, owned in
+            await barrier.hold()
+            return try await library.performOwned(command, expectedRevision: revision, ownedTimerEntryID: owned)
+        }
+        let f = try await editorFixture(operations: operations)
+        do {
+            let model = f.model
+            let reviewed = try await model.enqueueTimer(.start(taskID: f.first)).value
+            // An unchanged rename supplies a FIFO barrier without changing editor state.
+            let predecessor = model.enqueueSubmit(.renameTask(id: f.second,
+                name: editorChange ? "Changed" : "Second"), expectedRevision: reviewed.revision)
+            await barrier.wait()
+            await probe.reset()
+            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+                name: "Rejected", budgetMinutes: 1, confirmMigration: false, start: false)
+            let work = model.enqueueTaskCreation(request, expectedRevision: reviewed.revision,
+                                                 reviewedSnapshot: reviewed)
+            if !editorChange {
+                let generation = model.timerLifecycleGate.latchSleep()
+                #expect(model.timerLifecycleGate.reset(generation: generation))
+            }
+            let reads = f.clock.reads
+            await barrier.release()
+            let saved = try await predecessor.value
+            if editorChange {
+                await #expect(throws: EditorReviewError.changed) { try await work.value }
+                #expect(f.clock.reads == reads)
+            } else {
+                await #expect(throws: TimerError.reviewRequired) { try await work.value }
+                #expect(f.clock.reads == reads + 1)
+            }
+            #expect(await probe.paths.isEmpty)
+            #expect(model.snapshot == saved)
+            #expect(!saved.tasks.contains { $0.id == request.id })
+            await f.dispose()
+        } catch { await barrier.release(); await f.dispose(); throw error }
+    }
+
+    @Test(arguments: [false, true])
+    func pausedOrSleepingBudgetCreationNeverSamples(sleeping: Bool) async throws {
+        let probe = EditorOperationProbe()
+        let f = try await editorFixture(operations: editorOperations(probe))
+        do {
+            let model = f.model
+            let started = try await model.enqueueTimer(.start(taskID: f.first)).value
+            if sleeping { _ = model.timerLifecycleGate.latchSleep() }
+            else {
+                f.clock.set(99)
+                await #expect(throws: TimerError.clockRollback) { try await model.enqueueTimer(.checkpoint).value }
+            }
+            await probe.reset()
+            let reads = f.clock.reads
+            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+                name: "Saved prefix only", budgetMinutes: 1, confirmMigration: false, start: false)
+            let result = try await model.enqueueTaskCreation(request, expectedRevision: started.revision).value
+            #expect(f.clock.reads == reads)
+            #expect(await probe.paths == ["createTask"])
+            #expect(result.snapshot.activeTimer == started.activeTimer)
+            #expect(result.snapshot.tasks.first { $0.id == request.id }?.budgetMinutes == 1)
+            if sleeping { #expect(model.timerLifecycleGate.state().sleeping) }
+            await f.dispose()
+        } catch { await f.dispose(); throw error }
+    }
+
+    @Test func sampledCreationDrainsBeforeQueuedClose() async throws {
+        let probe = EditorOperationProbe(), barrier = TimerTestBarrier()
+        var operations = editorOperations(probe)
+        operations.createBudgetTask = { library, request, revision, owned, checkpoint in
+            await probe.write("createBudgetTask", revision: revision)
+            await barrier.hold()
+            return try await library.createTaskOwned(request, expectedRevision: revision,
+                ownedTimerEntryID: owned, instant: nil, checkpointAt: checkpoint)
+        }
+        let f = try await editorFixture(operations: operations)
+        do {
+            let model = f.model
+            let before = try await model.enqueueTimer(.start(taskID: f.first)).value
+            f.clock.set(160)
+            await probe.reset()
+            let reads = f.clock.reads
+            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+                name: "Drain sampled write", budgetMinutes: 1, confirmMigration: false, start: false)
+            let work = model.enqueueTaskCreation(request, expectedRevision: before.revision)
+            await barrier.wait()
+            let close = model.enqueueClose()
+            await #expect(throws: LibraryAccessError.unavailable) {
+                try await model.enqueueTaskCreation(request, expectedRevision: before.revision).value
+            }
+            await barrier.release()
+            let result = try await work.value
+            await close.value
+            #expect(result.snapshot.activeTimer?.checkpointAt == 160)
+            #expect(result.snapshot.revision == before.revision + 1)
+            #expect(model.availability == .closed && model.snapshot == nil)
+            #expect(f.clock.reads == reads + 1)
+            #expect(await probe.paths == ["createBudgetTask"])
+            try await model.open()
+            #expect(model.snapshot == result.snapshot)
+            #expect(model.snapshot?.tasks.filter { $0.id == request.id }.count == 1)
+            await f.dispose()
+        } catch { await barrier.release(); await f.dispose(); throw error }
+    }
+
+    @Test func sampledCreationPreservesLaterSleepAndDrainsBeforeClose() async throws {
+        let probe = EditorOperationProbe(), barrier = TimerTestBarrier()
+        var operations = editorOperations(probe)
+        operations.createBudgetTask = { library, request, revision, owned, checkpoint in
+            await probe.write("createBudgetTask", revision: revision)
+            await barrier.hold()
+            return try await library.createTaskOwned(request, expectedRevision: revision,
+                ownedTimerEntryID: owned, instant: nil, checkpointAt: checkpoint)
+        }
+        let f = try await editorFixture(operations: operations)
+        do {
+            let model = f.model
+            let before = try await model.enqueueTimer(.start(taskID: f.first)).value
+            f.clock.set(160)
+            await probe.reset()
+            let reads = f.clock.reads
+            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+                name: "Accepted", budgetMinutes: 1, confirmMigration: false, start: false)
+            let work = model.enqueueTaskCreation(request, expectedRevision: before.revision)
+            await barrier.wait()
+            let generation = model.timerLifecycleGate.latchSleep()
+            await barrier.release()
+            let result = try await work.value
+            #expect(model.timerLifecycleGate.state().generation == generation)
+            #expect(model.timerLifecycleGate.state().sleeping)
+            #expect(result.snapshot.activeTimer?.checkpointAt == 160)
+            // A second accepted saved-prefix creation queues before close; close must drain it.
+            let second = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+                name: "Before close", budgetMinutes: 1, confirmMigration: false, start: false)
+            let accepted = model.enqueueTaskCreation(second, expectedRevision: result.snapshot.revision)
+            let close = model.enqueueClose()
+            let saved = try await accepted.value
+            await close.value
+            #expect(model.availability == .closed && model.snapshot == nil)
+            // One read for the creation sample, one for latchSleep's observation boundary.
+            #expect(f.clock.reads == reads + 2)
+            #expect(await probe.paths == ["createBudgetTask", "createTask"])
+            try await model.open()
+            #expect(model.snapshot == saved.snapshot)
+            #expect(model.snapshot?.tasks.filter { $0.id == request.id || $0.id == second.id }.count == 2)
+            await f.dispose()
+        } catch { await barrier.release(); await f.dispose(); throw error }
     }
 }

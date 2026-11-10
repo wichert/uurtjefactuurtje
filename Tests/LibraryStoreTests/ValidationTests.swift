@@ -15,7 +15,7 @@ import Testing
                       name: String = "Work", budget: Int64? = nil,
                       warning: WarningThreshold = .none) -> TaskRecord {
         TaskRecord(id: id(value), projectID: projectID ?? project.id,
-                   parentTaskID: parent.map(id), name: name, budgetSeconds: budget,
+                   parentTaskID: parent.map(id), name: name, budgetMinutes: budget,
                    lastWarnedThreshold: warning)
     }
 
@@ -29,7 +29,7 @@ import Testing
         PendingSleepInterval(id: id(value), taskID: id(owner), sleepAt: start, wakeAt: end)
     }
 
-    private func snapshot(version: Int64 = 1, revision: Int64 = 0, projects: [Project]? = nil,
+    private func snapshot(version: Int64 = 2, revision: Int64 = 0, projects: [Project]? = nil,
                           tasks: [TaskRecord]? = nil, entries: [TimeEntry] = [],
                           timer: ActiveTimer? = nil,
                           sleep: [PendingSleepInterval] = []) -> LibrarySnapshot {
@@ -44,7 +44,7 @@ import Testing
 
     @Test func emptyOrdinaryAndThrowingEquivalence() throws {
         let values = [snapshot(projects: [], tasks: []), snapshot(),
-                      snapshot(entries: [entry()]), snapshot(version: 2, revision: -1),
+                      snapshot(entries: [entry()]), snapshot(version: 1, revision: -1),
                       snapshot(tasks: [task(name: " ")])]
         for value in values {
             let found = errors(value)
@@ -125,8 +125,8 @@ import Testing
         #expect(errors(snapshot(tasks: tasks.reversed())) == expected)
         let rows = [entry(10, start: 0, end: 100), entry(11, start: 0, end: 10),
                     entry(12, start: 20, end: 30), entry(13, start: 100, end: 110)]
-        let value = snapshot(version: 2, entries: rows, sleep: [pending(20, end: 0), pending(21, end: 0)])
-        let reversed = snapshot(version: 2, entries: rows.reversed(),
+        let value = snapshot(version: 1, entries: rows, sleep: [pending(20, end: 0), pending(21, end: 0)])
+        let reversed = snapshot(version: 1, entries: rows.reversed(),
                                 sleep: [pending(21, end: 0), pending(20, end: 0)])
         #expect(errors(value) == errors(reversed))
         #expect(errors(value) == [Violation(.metadata), Violation(.overlap, id(11)),
@@ -217,32 +217,31 @@ import Testing
     }
 
     @Test func exactWarningBandsRollupAndRearming() {
-        for (seconds, band): (Int64, WarningThreshold) in [(79, .none), (80, .eighty), (99, .eighty),
+        for (minutes, band): (Int64, WarningThreshold) in [(79, .none), (80, .eighty), (99, .eighty),
                                                          (100, .hundred), (101, .hundred)] {
             let tasks = [task(budget: 100, warning: band), task(3, parent: 2, budget: 100, warning: band)]
-            #expect(errors(snapshot(tasks: tasks, entries: [entry(owner: 3, end: seconds)])).isEmpty)
+            #expect(errors(snapshot(tasks: tasks, entries: [entry(owner: 3, end: minutes * 60)])).isEmpty)
         }
-        #expect(errors(snapshot(tasks: [task(budget: 100, warning: .hundred)], entries: [entry(end: 79)])) ==
+        #expect(errors(snapshot(tasks: [task(budget: 100, warning: .hundred)], entries: [entry(end: 79 * 60)])) ==
                 [Violation(.warning, id(2))])
         #expect(errors(snapshot(tasks: [task(warning: .eighty)])) == [Violation(.warning, id(2))])
         #expect(errors(snapshot(tasks: [task(budget: 1)], entries: [])).isEmpty)
-        #expect(errors(snapshot(tasks: [task(budget: 1, warning: .hundred)], entries: [entry(end: 1)])).isEmpty)
-        let threshold = Int64.max / 5 * 4 + 2
-        #expect(errors(snapshot(tasks: [task(budget: .max)], entries: [entry(end: threshold - 1)])).isEmpty)
-        #expect(errors(snapshot(tasks: [task(budget: .max, warning: .eighty)],
-                                entries: [entry(end: threshold)])).isEmpty)
-        // Accumulation exceeds Int64 without wrapping.
-        #expect(errors(snapshot(tasks: [task(budget: .max, warning: .hundred)],
-                                entries: [entry(start: .min, end: -1), entry(11, start: -1, end: .max - 1)])).isEmpty)
+        #expect(errors(snapshot(tasks: [task(budget: 1, warning: .hundred)], entries: [entry(end: 60)])).isEmpty)
+        // Even a maximum representable single interval cannot consume a maximum-minute budget.
+        #expect(errors(snapshot(tasks: [task(budget: .max)], entries: [entry(end: .max)])).isEmpty)
+        // Decimal accumulation exceeds Int64 without wrapping, and still reaches an ordinary budget.
+        let rows = [entry(start: .min, end: -1), entry(11, start: -1, end: .max - 1)]
+        #expect(errors(snapshot(tasks: [task(budget: 100, warning: .hundred)], entries: rows)).isEmpty)
+        #expect(errors(snapshot(tasks: [task(budget: .max)], entries: rows)).isEmpty)
     }
 
     @Test func onlyDurableCheckpointPrefixCounts() {
         let open = entry(start: 0, end: nil)
-        for (checkpoint, band): (Int64, WarningThreshold) in [(0, .none), (79, .none), (80, .eighty), (100, .hundred)] {
+        for (minutes, band): (Int64, WarningThreshold) in [(0, .none), (79, .none), (80, .eighty), (100, .hundred)] {
             #expect(errors(snapshot(tasks: [task(budget: 100, warning: band)], entries: [open],
-                                    timer: ActiveTimer(entryID: open.id, checkpointAt: checkpoint)), now: 1000).isEmpty)
+                timer: ActiveTimer(entryID: open.id, checkpointAt: minutes * 60)), now: 60_000).isEmpty)
         }
         #expect(errors(snapshot(tasks: [task(budget: 100, warning: .hundred)], entries: [open],
-                                timer: ActiveTimer(entryID: open.id, checkpointAt: 80))) == [Violation(.warning, id(2))])
+            timer: ActiveTimer(entryID: open.id, checkpointAt: 4800))) == [Violation(.warning, id(2))])
     }
 }

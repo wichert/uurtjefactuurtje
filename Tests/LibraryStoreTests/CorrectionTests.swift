@@ -6,7 +6,7 @@ struct CorrectionFixture {
     let project = UUID(), otherProject = UUID(), root = UUID(), leaf = UUID(), otherLeaf = UUID()
     func state(_ entries: [TimeEntry] = [], active: ActiveTimer? = nil,
                pending: [PendingSleepInterval] = [], revision: Int64 = 1) -> LibrarySnapshot {
-        LibrarySnapshot(schemaVersion: 1, revision: revision,
+        LibrarySnapshot(schemaVersion: 2, revision: revision,
             projects: [Project(id: project, name: "Client", hourlyRate: 1, currencyCode: "EUR"),
                        Project(id: otherProject, name: "Other", hourlyRate: 2, currencyCode: "USD", isArchived: true)],
             tasks: [TaskRecord(id: root, projectID: project, name: "Root"),

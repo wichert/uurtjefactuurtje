@@ -191,7 +191,7 @@ private func rate(_ s: OpaquePointer, _ i: Int32) throws -> Decimal {
 private let schema: [(String, String, String)] = [
     ("table", "library_metadata", "CREATE TABLE library_metadata (id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER NOT NULL CHECK (schema_version >= 1), revision INTEGER NOT NULL CHECK (revision >= 0))"),
     ("table", "projects", "CREATE TABLE projects (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL CHECK (length(trim(name)) > 0), hourly_rate TEXT NOT NULL, currency_code TEXT NOT NULL CHECK (length(currency_code) = 3), is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)))"),
-    ("table", "tasks", "CREATE TABLE tasks (id TEXT NOT NULL PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT, parent_task_id TEXT, name TEXT NOT NULL CHECK (length(trim(name)) > 0), budget_seconds INTEGER CHECK (budget_seconds > 0), last_warned_threshold INTEGER NOT NULL DEFAULT 0 CHECK (last_warned_threshold IN (0, 80, 100)), UNIQUE (id, project_id), FOREIGN KEY (parent_task_id, project_id) REFERENCES tasks(id, project_id) ON DELETE RESTRICT, CHECK (parent_task_id IS NULL OR parent_task_id <> id))"),
+    ("table", "tasks", "CREATE TABLE tasks (id TEXT NOT NULL PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT, parent_task_id TEXT, name TEXT NOT NULL CHECK (length(trim(name)) > 0), budget_minutes INTEGER CHECK (budget_minutes > 0), last_warned_threshold INTEGER NOT NULL DEFAULT 0 CHECK (last_warned_threshold IN (0, 80, 100)), UNIQUE (id, project_id), FOREIGN KEY (parent_task_id, project_id) REFERENCES tasks(id, project_id) ON DELETE RESTRICT, CHECK (parent_task_id IS NULL OR parent_task_id <> id))"),
     ("table", "time_entries", "CREATE TABLE time_entries (id TEXT NOT NULL PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT, start_at INTEGER NOT NULL, end_at INTEGER, CHECK (end_at IS NULL OR end_at > start_at))"),
     ("table", "active_timer", "CREATE TABLE active_timer (id INTEGER PRIMARY KEY CHECK (id = 1), entry_id TEXT NOT NULL UNIQUE REFERENCES time_entries(id) ON DELETE RESTRICT, checkpoint_at INTEGER NOT NULL)"),
     ("table", "pending_sleep_intervals", "CREATE TABLE pending_sleep_intervals (id TEXT NOT NULL PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT, sleep_at INTEGER NOT NULL, wake_at INTEGER, CHECK (wake_at IS NULL OR wake_at > sleep_at))"),
@@ -206,15 +206,25 @@ private let schema: [(String, String, String)] = [
     ("trigger", "active_entry_update_valid", "CREATE TRIGGER active_entry_update_valid BEFORE UPDATE ON time_entries WHEN EXISTS (SELECT 1 FROM active_timer WHERE entry_id = OLD.id AND (NEW.end_at IS NOT NULL OR NEW.start_at > checkpoint_at)) BEGIN SELECT RAISE(ABORT, 'invalid active entry'); END")
 ]
 
-private func checkSchema(_ db: SQLConnection) throws {
+private let schemaV1: [(String, String, String)] = schema.map { type, name, sql in
+    (type, name, name == "tasks"
+        ? sql.replacingOccurrences(of: "budget_minutes", with: "budget_seconds") : sql)
+}
+
+private func checkSchema(_ db: SQLConnection,
+                         expectedSchema: [(String, String, String)] = schema) throws {
     let actual = try db.rows("SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type, name") {
         try [text($0, 0), text($0, 1), text($0, 2)]
     }
-    let expected = schema.map { [$0.0, $0.1, $0.2] }.sorted { ($0[0], $0[1]) < ($1[0], $1[1]) }
+    let expected = expectedSchema.map { [$0.0, $0.1, $0.2] }
+        .sorted { ($0[0], $0[1]) < ($1[0], $1[1]) }
     guard actual == expected else { throw StorageError.invalidStorage("schema shape") }
 }
+
 private func configure(_ db: SQLConnection) throws {
-    guard sqlite3_libversion_number() >= 3_009_000 else { throw StorageError.invalidStorage("SQLite runtime too old") }
+    guard sqlite3_libversion_number() >= 3_025_000 else {
+        throw StorageError.invalidStorage("SQLite runtime too old")
+    }
     try db.exec("PRAGMA foreign_keys=ON")
     let journal = try db.rows("PRAGMA journal_mode=DELETE") { try text($0, 0) }
     try db.exec("PRAGMA synchronous=FULL")
@@ -237,15 +247,15 @@ private func decodeSnapshot(_ db: SQLConnection) throws -> LibrarySnapshot {
         try (integer($0, 0), integer($0, 1), integer($0, 2))
     }
     guard meta.count == 1, meta[0].0 == 1 else { throw StorageError.invalidStorage("metadata singleton") }
-    guard meta[0].1 == 1 else { throw StorageError.unsupportedSchema(meta[0].1) }
+    guard meta[0].1 == 2 else { throw StorageError.unsupportedSchema(meta[0].1) }
     let projects = try db.rows("SELECT id, name, hourly_rate, currency_code, is_archived FROM projects ORDER BY id") { s in
         let flag = try integer(s, 4)
         guard flag == 0 || flag == 1 else { throw StorageError.invalidStorage("boolean") }
         return try Project(id: uuid(s, 0), name: text(s, 1), hourlyRate: rate(s, 2), currencyCode: text(s, 3), isArchived: flag == 1)
     }
-    let tasks = try db.rows("SELECT id, project_id, parent_task_id, name, budget_seconds, last_warned_threshold FROM tasks ORDER BY id") { s in
+    let tasks = try db.rows("SELECT id, project_id, parent_task_id, name, budget_minutes, last_warned_threshold FROM tasks ORDER BY id") { s in
         guard let warning = WarningThreshold(rawValue: try integer(s, 5)) else { throw StorageError.invalidStorage("warning") }
-        return try TaskRecord(id: uuid(s, 0), projectID: uuid(s, 1), parentTaskID: optionalUUID(s, 2), name: text(s, 3), budgetSeconds: optionalInteger(s, 4), lastWarnedThreshold: warning)
+        return try TaskRecord(id: uuid(s, 0), projectID: uuid(s, 1), parentTaskID: optionalUUID(s, 2), name: text(s, 3), budgetMinutes: optionalInteger(s, 4), lastWarnedThreshold: warning)
     }
     let entries = try db.rows("SELECT id, task_id, start_at, end_at FROM time_entries ORDER BY id") { s in
         try TimeEntry(id: uuid(s, 0), taskID: uuid(s, 1), startAt: integer(s, 2), endAt: optionalInteger(s, 3))
@@ -259,6 +269,43 @@ private func decodeSnapshot(_ db: SQLConnection) throws -> LibrarySnapshot {
     }
     let snapshot = LibrarySnapshot(schemaVersion: meta[0].1, revision: meta[0].2, projects: projects, tasks: tasks, entries: entries, activeTimer: timers.first?.1, pendingSleepIntervals: pending)
     return snapshot
+}
+
+private func migrateV1(_ db: SQLConnection) throws {
+    // Called only inside the initializer's transaction, after exact v1 shape/integrity checks.
+    // Inspect every stored budget before any ALTER/UPDATE: numeric affinity would otherwise let the
+    // `/ 60` arithmetic silently sanitize TEXT/BLOB/REAL values instead of failing closed.
+    let stored = try db.rows("SELECT budget_seconds FROM tasks WHERE budget_seconds IS NOT NULL") {
+        try integer($0, 0) // existing strict codec: TEXT/BLOB/REAL throw invalidStorage("expected integer")
+    }
+    guard stored.allSatisfy({ $0 > 0 }) else {
+        throw StorageError.invalidStorage("nonpositive budget_seconds")
+    }
+    try db.exec("ALTER TABLE tasks RENAME COLUMN budget_seconds TO budget_minutes")
+    try db.exec("""
+        UPDATE tasks SET budget_minutes = CASE
+            WHEN budget_minutes IS NULL THEN NULL
+            ELSE budget_minutes / 60 + CASE WHEN budget_minutes % 60 > 0 THEN 1 ELSE 0 END
+        END
+        """)
+    try db.exec("UPDATE library_metadata SET schema_version=2 WHERE id=1")
+    guard db.changes == 1 else { throw StorageError.invalidStorage("metadata singleton") }
+    try checkSchema(db)
+    try checkIntegrity(db)
+    let candidate = try decodeSnapshot(db)
+    let errors = SnapshotValidator.violations(in: candidate, now: nil).filter { $0.code != .warning }
+    // Reject rounding-induced allocation conflicts; never expand ancestors.
+    guard errors.isEmpty else { throw LibraryError.invalid(errors) }
+    let totals = try BudgetRules.usage(in: candidate)
+    for task in candidate.tasks {
+        let band = BudgetRules.band(used: totals[task.id, default: 0], budget: task.budgetMinutes)
+        if band != task.lastWarnedThreshold {
+            try db.run("UPDATE tasks SET last_warned_threshold=? WHERE id=?",
+                       [.integer(band.rawValue), .text(task.id.uuidString.lowercased())])
+            guard db.changes == 1 else { throw StorageError.invalidStorage("unexpected affected row count") }
+        }
+    }
+    _ = try load(db)
 }
 
 private func load(_ db: SQLConnection, now: Int64? = nil) throws -> LibrarySnapshot {
@@ -276,15 +323,30 @@ actor Storage {
 
     init(privateDatabaseAt url: URL) throws {
         let db = try SQLConnection(privatePath: url.path)
-        try configure(db)
-        try db.exec("BEGIN")
         do {
-            try checkSchema(db)
-            try checkIntegrity(db)
-            _ = try load(db)
+            try configure(db)
+            try db.exec("BEGIN IMMEDIATE")
+            let meta = try db.rows("SELECT id, schema_version, revision FROM library_metadata") {
+                try (integer($0, 0), integer($0, 1), integer($0, 2))
+            }
+            guard meta.count == 1, meta[0].0 == 1, meta[0].2 >= 0 else {
+                throw StorageError.invalidStorage("metadata singleton")
+            }
+            switch meta[0].1 {
+            case 1:
+                try checkSchema(db, expectedSchema: schemaV1)
+                try checkIntegrity(db)
+                try migrateV1(db)
+            case 2:
+                try checkSchema(db)
+                try checkIntegrity(db)
+                _ = try load(db)
+            default:
+                throw StorageError.unsupportedSchema(meta[0].1)
+            }
             try db.exec("COMMIT")
         } catch {
-            try? db.exec("ROLLBACK")
+            if !db.autocommit { try? db.exec("ROLLBACK") }
             db.close()
             throw error
         }
@@ -313,7 +375,7 @@ actor Storage {
             try db.exec("BEGIN IMMEDIATE")
             do {
                 for (_, _, statement) in schema { try db.exec(statement) }
-                try db.exec("INSERT INTO library_metadata (id, schema_version, revision) VALUES (1, 1, 0)")
+                try db.exec("INSERT INTO library_metadata (id, schema_version, revision) VALUES (1, 2, 0)")
                 try db.exec("COMMIT")
             } catch {
                 try? db.exec("ROLLBACK")
@@ -366,7 +428,7 @@ actor Storage {
         guard errors.isEmpty else { throw LibraryError.invalid(errors) }
         let totals = try BudgetRules.usage(in: candidate)
         for task in candidate.tasks {
-            let band = BudgetRules.band(used: totals[task.id, default: 0], budget: task.budgetSeconds)
+            let band = BudgetRules.band(used: totals[task.id, default: 0], budget: task.budgetMinutes)
             if band != task.lastWarnedThreshold {
                 try runCommand("UPDATE tasks SET last_warned_threshold=? WHERE id=?",
                     bindings: [.integer(band.rawValue), .text(task.id.uuidString.lowercased())], expectedChanges: 1)

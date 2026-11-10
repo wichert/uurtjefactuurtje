@@ -34,7 +34,7 @@ private func addProject(_ store: isolated Storage, id: String, name: String = "C
             #expect(try Data(contentsOf: url) == original)
             let store = try Storage(privateDatabaseAt: url)
             let snapshot = try await store.snapshot()
-            #expect(snapshot.schemaVersion == 1 && snapshot.revision == 0 && snapshot.projects.isEmpty)
+            #expect(snapshot.schemaVersion == 2 && snapshot.revision == 0 && snapshot.projects.isEmpty)
             await store.close()
             await #expect(throws: StorageError.unavailable) { try await store.snapshot() }
             let reopened = try Storage(privateDatabaseAt: url)
@@ -47,7 +47,7 @@ private func addProject(_ store: isolated Storage, id: String, name: String = "C
         for mutation in [
             "CREATE VIEW extra AS SELECT * FROM projects",
             "DROP TRIGGER active_timer_insert_valid",
-            "UPDATE library_metadata SET schema_version=2",
+            "UPDATE library_metadata SET schema_version=3",
             "INSERT INTO projects VALUES ('ABC', 'Client', '1', 'EUR', 0)",
             "INSERT INTO projects VALUES ('00000000-0000-0000-0000-000000000001', 'Client', '01', 'EUR', 0)",
             "INSERT INTO projects VALUES ('00000000-0000-0000-0000-000000000001', CAST(x'ff' AS TEXT), '1', 'EUR', 0)",
@@ -178,5 +178,178 @@ private func addProject(_ store: isolated Storage, id: String, name: String = "C
             #expect(try await store.snapshot().revision == 0)
             await store.close()
         }
+    }
+}
+
+extension StorageTests {
+    @Test func productionV1MigrationPreservesHierarchyEntriesPendingAndBands() async throws {
+        let root = URL(fileURLWithPath: "/private" + FileManager.default.temporaryDirectory.path)
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.sqlite")
+        try createProductionV1(url)
+        let p = UUID(), parent = UUID(), leaf = UUID(), one = UUID(), hour = UUID(), huge = UUID()
+        let entry = UUID(), active = UUID(), pending = UUID()
+        func k(_ id: UUID) -> String { id.uuidString.lowercased() }
+        try raw(url, """
+            PRAGMA foreign_keys=ON;
+            INSERT INTO projects VALUES ('\(k(p))','Client','12.5','EUR',0);
+            INSERT INTO tasks VALUES ('\(k(parent))','\(k(p))',NULL,'Parent',NULL,0);
+            INSERT INTO tasks VALUES ('\(k(leaf))','\(k(p))','\(k(parent))','Leaf',5400,80);
+            INSERT INTO tasks VALUES ('\(k(one))','\(k(p))',NULL,'One',1,100);
+            INSERT INTO tasks VALUES ('\(k(hour))','\(k(p))',NULL,'Hour',3600,0);
+            INSERT INTO tasks VALUES ('\(k(huge))','\(k(p))',NULL,'Huge',9223372036854775807,0);
+            INSERT INTO time_entries VALUES ('\(k(entry))','\(k(leaf))',0,4320);
+            INSERT INTO time_entries VALUES ('\(k(active))','\(k(one))',5000,NULL);
+            INSERT INTO active_timer VALUES (1,'\(k(active))',5001);
+            INSERT INTO pending_sleep_intervals VALUES ('\(k(pending))','\(k(leaf))',4400,4500);
+            """)
+        let library = try await Library.open(at: root)
+        let value = try await library.snapshot()
+        #expect(value.schemaVersion == 2 && value.revision == 7)
+        #expect(value.tasks.first { $0.id == parent }?.budgetMinutes == nil)
+        #expect(value.tasks.first { $0.id == leaf }?.budgetMinutes == 90)
+        #expect(value.tasks.first { $0.id == one }?.budgetMinutes == 1)
+        #expect(value.tasks.first { $0.id == hour }?.budgetMinutes == 60)
+        #expect(value.tasks.first { $0.id == huge }?.budgetMinutes == 153722867280912931)
+        #expect(value.tasks.first { $0.id == leaf }?.parentTaskID == parent)
+        #expect(value.tasks.first { $0.id == leaf }?.lastWarnedThreshold == .eighty)
+        #expect(value.tasks.first { $0.id == one }?.lastWarnedThreshold == WarningThreshold.none)
+        #expect(value.entries.contains(TimeEntry(id: entry, taskID: leaf, startAt: 0, endAt: 4320)))
+        #expect(value.activeTimer == ActiveTimer(entryID: active, checkpointAt: 5001))
+        #expect(value.pendingSleepIntervals == [PendingSleepInterval(id: pending, taskID: leaf,
+                                                                  sleepAt: 4400, wakeAt: 4500)])
+        try SnapshotValidator.validate(value)
+        await library.close()
+        let reopened = try await Library.open(at: root)
+        #expect(try await reopened.snapshot() == value)
+        await reopened.close()
+        // Opening through Storage checks the exact v2 allowlist, all indexes/triggers included.
+        let checked = try Storage(privateDatabaseAt: url)
+        #expect(try await checked.snapshot() == value)
+        await checked.close()
+        // A real second project isolates the composite parent FK from projects(id).
+        let secondProject = UUID().uuidString.lowercased()
+        try raw(url, "INSERT INTO projects VALUES ('\(secondProject)','Second','1','USD',0)")
+        #expect(throws: StorageError.self) {
+            try raw(url, """
+                PRAGMA foreign_keys=ON;
+                UPDATE tasks SET project_id='\(secondProject)' WHERE id='\(k(leaf))';
+                """)
+        }
+        // The original active-entry trigger must still reject closing an owned active row.
+        #expect(throws: StorageError.self) {
+            try raw(url, "UPDATE time_entries SET end_at=5002 WHERE id='\(k(active))'")
+        }
+    }
+
+    @Test func roundedAllocationConflictDoesNotPublishCanonical() async throws {
+        let root = URL(fileURLWithPath: "/private" + FileManager.default.temporaryDirectory.path)
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.sqlite")
+        try createProductionV1(url)
+        let p = UUID().uuidString.lowercased(), parent = UUID().uuidString.lowercased()
+        try raw(url, """
+            PRAGMA foreign_keys=ON;
+            INSERT INTO projects VALUES ('\(p)','Client','1','EUR',0);
+            INSERT INTO tasks VALUES ('\(parent)','\(p)',NULL,'Root',60,0);
+            INSERT INTO tasks VALUES ('\(UUID().uuidString.lowercased())','\(p)','\(parent)','One',1,0);
+            INSERT INTO tasks VALUES ('\(UUID().uuidString.lowercased())','\(p)','\(parent)','Rest',59,0);
+            """)
+        let bytes = try Data(contentsOf: url)
+        do {
+            let owner = try await Library.open(at: root)
+            await owner.close()
+            Issue.record("rounded over-allocation unexpectedly accepted")
+        } catch LibraryError.invalid(let errors) {
+            #expect(errors.contains { $0.code == .allocation })
+        }
+        #expect(try Data(contentsOf: url) == bytes)
+    }
+
+    @Test(arguments: ["'thirty'", "x'33363030'"])
+    func migrationRejectsNonIntegerV1BudgetStorageWithoutChangingCanonical(encoded: String) async throws {
+        let root = URL(fileURLWithPath: "/private" + FileManager.default.temporaryDirectory.path)
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.sqlite")
+        try createProductionV1(url)
+        let p = UUID().uuidString.lowercased()
+        // TEXT affinity does not convert these values, and `> 0` holds by SQLite type ordering, so the
+        // historical CHECK accepts them: only the pre-migration storage-class check can reject them.
+        try raw(url, """
+            PRAGMA foreign_keys=ON;
+            INSERT INTO projects VALUES ('\(p)','Client','1','EUR',0);
+            INSERT INTO tasks VALUES ('\(UUID().uuidString.lowercased())','\(p)',NULL,'Corrupt',\(encoded),0);
+            """)
+        let bytes = try Data(contentsOf: url)
+        await #expect(throws: StorageError.invalidStorage("expected integer")) {
+            try await Library.open(at: root)
+        }
+        #expect(try Data(contentsOf: url) == bytes)
+    }
+
+    @Test func migrationRejectsUnknownV1ShapeWithoutChangingCanonical() async throws {
+        let root = URL(fileURLWithPath: "/private" + FileManager.default.temporaryDirectory.path)
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.sqlite")
+        try createProductionV1(url)
+        try raw(url, "CREATE VIEW extra AS SELECT * FROM tasks")
+        let bytes = try Data(contentsOf: url)
+        await #expect(throws: StorageError.invalidStorage("schema shape")) {
+            try await Library.open(at: root)
+        }
+        #expect(try Data(contentsOf: url) == bytes)
+    }
+}
+
+extension StorageTests {
+    @Test(arguments: [
+        "DROP INDEX tasks_by_parent; CREATE INDEX tasks_by_parent ON tasks(parent_task_id)",
+        "DROP TRIGGER active_timer_update_valid; CREATE TRIGGER active_timer_update_valid BEFORE UPDATE ON active_timer BEGIN SELECT 1; END"
+    ])
+    func v1IndexAndTriggerMutationsAreRejected(mutation: String) async throws {
+        let root = URL(fileURLWithPath: "/private" + FileManager.default.temporaryDirectory.path)
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.sqlite")
+        try createProductionV1(url)
+        try raw(url, mutation)
+        let before = try Data(contentsOf: url)
+        await #expect(throws: StorageError.invalidStorage("schema shape")) { try await Library.open(at: root) }
+        #expect(try Data(contentsOf: url) == before)
+    }
+
+    @Test func v1UnknownWakeWithoutActiveTimerSurvivesUpgrade() async throws {
+        let root = URL(fileURLWithPath: "/private" + FileManager.default.temporaryDirectory.path)
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.sqlite")
+        try createProductionV1(url)
+        let p = UUID(), task = UUID(), pending = UUID()
+        func k(_ id: UUID) -> String { id.uuidString.lowercased() }
+        try raw(url, """
+            INSERT INTO projects VALUES ('\(k(p))','Client','1','EUR',0);
+            INSERT INTO tasks VALUES ('\(k(task))','\(k(p))',NULL,'Work',59,0);
+            INSERT INTO pending_sleep_intervals VALUES ('\(k(pending))','\(k(task))',100,NULL);
+            """)
+        let owner = try await Library.open(at: root)
+        let state = try await owner.snapshot()
+        #expect(state.tasks.first?.budgetMinutes == 1 && state.activeTimer == nil)
+        #expect(state.pendingSleepIntervals == [PendingSleepInterval(id: pending, taskID: task, sleepAt: 100, wakeAt: nil)])
+        await owner.close()
+        let bytes = try Data(contentsOf: url)
+        let reopened = try await Library.open(at: root)
+        #expect(try await reopened.snapshot() == state)
+        await reopened.close()
+        #expect(try Data(contentsOf: url) == bytes)
     }
 }

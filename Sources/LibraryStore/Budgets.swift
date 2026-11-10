@@ -13,7 +13,7 @@ public enum BudgetInput {
         var carry = 0
         var product: [UInt8] = []
         for digit in digits.utf8.reversed() {
-            let value = Int(digit - 48) * 3600 + carry
+            let value = Int(digit - 48) * 60 + carry
             product.append(UInt8(value % 10))
             carry = value / 10
         }
@@ -21,30 +21,30 @@ public enum BudgetInput {
         let scale = parts.count == 2 ? parts[1].utf8.count : 0
         guard product.prefix(scale).allSatisfy({ $0 == 0 }) else { return nil }
         let whole = product.dropFirst(scale).reversed().map { Character(String($0)) }
-        guard let seconds = Int64(String(whole)), seconds > 0 else { return nil }
-        return seconds
+        guard let minutes = Int64(String(whole)), minutes > 0 else { return nil }
+        return minutes
     }
 
-    public static func text(_ seconds: Int64, locale: Locale = .current) -> String {
+    public static func text(_ minutes: Int64, locale: Locale = .current) -> String {
         let formatter = NumberFormatter()
         formatter.locale = locale
         formatter.numberStyle = .decimal
         formatter.usesGroupingSeparator = false
         formatter.maximumFractionDigits = 9
-        return formatter.string(from: NSDecimalNumber(decimal: Decimal(seconds) / 3600))!
+        return formatter.string(from: NSDecimalNumber(decimal: Decimal(minutes) / 60))!
     }
 }
 
 public struct BudgetAllocation: Equatable, Sendable {
     public let taskID: UUID
-    public let limitSeconds: Int64
-    public let allocatedSeconds: Decimal
+    public let limitMinutes: Int64
+    public let allocatedMinutes: Decimal
 }
 
 public struct BudgetAllowance: Equatable, Sendable {
     public let limitingAncestorID: UUID?
-    public let maximumSeconds: Decimal?
-    public let minimumSeconds: Decimal
+    public let maximumMinutes: Decimal?
+    public let minimumMinutes: Decimal
 }
 
 public struct BudgetWarning: Equatable, Sendable {
@@ -79,7 +79,7 @@ public enum BudgetRules {
                 index += 1
                 let task = tasks[id]!
                 if let parent = task.parentTaskID {
-                    sums[parent, default: 0] += task.budgetSeconds.map { Decimal($0) } ?? sums[id, default: 0]
+                    sums[parent, default: 0] += task.budgetMinutes.map { Decimal($0) } ?? sums[id, default: 0]
                     remaining[parent, default: 0] -= 1
                     if remaining[parent] == 0 { order.append(parent) }
                 }
@@ -92,9 +92,9 @@ public enum BudgetRules {
     public static func allocations(in snapshot: LibrarySnapshot) throws -> [BudgetAllocation] {
         let tree = try Tree(snapshot)
         return snapshot.tasks.sorted { $0.id.uuidString < $1.id.uuidString }.compactMap { task in
-            task.budgetSeconds.map {
-                BudgetAllocation(taskID: task.id, limitSeconds: $0,
-                                 allocatedSeconds: tree.frontier[task.id, default: 0])
+            task.budgetMinutes.map {
+                BudgetAllocation(taskID: task.id, limitMinutes: $0,
+                                 allocatedMinutes: tree.frontier[task.id, default: 0])
             }
         }
     }
@@ -113,17 +113,17 @@ public enum BudgetRules {
             }
         }
         let minimum = editingTaskID.map { tree.frontier[$0, default: 0] } ?? 0
-        let oldContribution = edited?.budgetSeconds.map { Decimal($0) } ?? minimum
+        let oldContribution = edited?.budgetMinutes.map { Decimal($0) } ?? minimum
         var cursor = parentTaskID
         while let id = cursor, let ancestor = tree.tasks[id] {
-            if let limit = ancestor.budgetSeconds {
+            if let limit = ancestor.budgetMinutes {
                 return BudgetAllowance(limitingAncestorID: id,
-                    maximumSeconds: Decimal(limit) - tree.frontier[id, default: 0] + oldContribution,
-                    minimumSeconds: minimum)
+                    maximumMinutes: Decimal(limit) - tree.frontier[id, default: 0] + oldContribution,
+                    minimumMinutes: minimum)
             }
             cursor = ancestor.parentTaskID
         }
-        return BudgetAllowance(limitingAncestorID: nil, maximumSeconds: nil, minimumSeconds: minimum)
+        return BudgetAllowance(limitingAncestorID: nil, maximumMinutes: nil, minimumMinutes: minimum)
     }
 
     public static func usage(in snapshot: LibrarySnapshot, liveEnd: Int64? = nil) throws -> [UUID: Decimal] {
@@ -157,8 +157,8 @@ public enum BudgetRules {
 
     public static func band(used: Decimal, budget: Int64?) -> WarningThreshold {
         guard let budget, budget > 0 else { return .none }
-        if used >= Decimal(budget) { return .hundred }
-        let eighty = (budget / 5) * 4 + ((budget % 5) * 4 + 4) / 5
-        return used >= Decimal(eighty) ? .eighty : .none
+        let seconds = Decimal(budget) * 60
+        if used >= seconds { return .hundred }
+        return used >= seconds * 4 / 5 ? .eighty : .none
     }
 }

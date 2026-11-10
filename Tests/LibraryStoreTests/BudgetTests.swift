@@ -8,7 +8,7 @@ import Testing
 
     private func snapshot(tasks: [TaskRecord], entries: [TimeEntry] = [], timer: ActiveTimer? = nil,
                           pending: [PendingSleepInterval] = []) -> LibrarySnapshot {
-        LibrarySnapshot(schemaVersion: 1, revision: 0,
+        LibrarySnapshot(schemaVersion: 2, revision: 0,
             projects: [Project(id: budgetProjectID, name: "Client", hourlyRate: 1, currencyCode: "EUR")],
             tasks: tasks, entries: entries, activeTimer: timer, pendingSleepIntervals: pending)
     }
@@ -16,26 +16,28 @@ import Testing
     private func task(_ id: UUID = UUID(), parent: UUID? = nil, budget: Int64? = nil,
                       band: WarningThreshold = .none) -> TaskRecord {
         TaskRecord(id: id, projectID: budgetProjectID, parentTaskID: parent,
-                   name: id.uuidString, budgetSeconds: budget, lastWarnedThreshold: band)
+                   name: id.uuidString, budgetMinutes: budget, lastWarnedThreshold: band)
     }
 
     @Test func exactLocalizedHoursAndUnchangedDisplay() {
         for text in ["", "0", "-1", "+1", "1e2", "NaN", "1x", "1,000", "1.", "1.1.1",
-                     "0.0001", "2562047788015216", "0.00027777777777777777777777777777777777777777"] {
+                     "0.0001", "0.0025", "153722867280912931", "0.0166666666666666666666666666666666666667"] {
             #expect(BudgetInput.parseHours(text, locale: locale) == nil)
         }
-        #expect(BudgetInput.parseHours(" 1.25 ", locale: locale) == 4500)
-        #expect(BudgetInput.parseHours(".25", locale: locale) == 900)
-        #expect(BudgetInput.parseHours("1,25", locale: Locale(identifier: "nl_NL")) == 4500)
+        #expect(BudgetInput.parseHours(" 1.25 ", locale: locale) == 75)
+        #expect(BudgetInput.parseHours(".25", locale: locale) == 15)
+        #expect(BudgetInput.parseHours("1,25", locale: Locale(identifier: "nl_NL")) == 75)
         #expect(BudgetInput.parseHours("1.25", locale: Locale(identifier: "nl_NL")) == nil)
-        #expect(BudgetInput.parseHours("0.0025", locale: locale) == 9)
-        #expect(BudgetInput.parseHours("0001.2500000000000000000000000000000000000000", locale: locale) == 4500)
+        #expect(BudgetInput.parseHours("0.05", locale: locale) == 3)
+        #expect(BudgetInput.parseHours("153722867280912930.1", locale: locale) == Int64.max - 1)
+        #expect(BudgetInput.parseHours("153722867280912930.15", locale: locale) == nil)
+        #expect(BudgetInput.parseHours("0001.2500000000000000000000000000000000000000", locale: locale) == 75)
         let original: Int64 = 1
         let displayed = BudgetInput.text(original, locale: locale)
         let submitted = displayed == BudgetInput.text(original, locale: locale)
             ? original : BudgetInput.parseHours(displayed, locale: locale)
         #expect(submitted == 1)
-        #expect(BudgetInput.text(4500, locale: Locale(identifier: "nl_NL")) == "1,25")
+        #expect(BudgetInput.text(75, locale: Locale(identifier: "nl_NL")) == "1,25")
     }
 
     @Test func nearestFrontiersEqualityAndEditedSubtreeAllowance() throws {
@@ -45,21 +47,21 @@ import Testing
                     task(sibling, parent: root, budget: 40)]
         let value = snapshot(tasks: rows)
         let allocations = try BudgetRules.allocations(in: value)
-        #expect(allocations.first { $0.taskID == root }?.allocatedSeconds == 100)
-        #expect(allocations.first { $0.taskID == child }?.allocatedSeconds == 40)
+        #expect(allocations.first { $0.taskID == root }?.allocatedMinutes == 100)
+        #expect(allocations.first { $0.taskID == child }?.allocatedMinutes == 40)
         #expect(!SnapshotValidator.violations(in: value).contains { $0.code == .allocation })
         let allowance = try BudgetRules.allowance(in: value, projectID: budgetProjectID,
                                                  parentTaskID: bridge, editingTaskID: child)
         #expect(allowance.limitingAncestorID == root)
-        #expect(allowance.maximumSeconds == 60)
-        #expect(allowance.minimumSeconds == 40)
+        #expect(allowance.maximumMinutes == 60)
+        #expect(allowance.minimumMinutes == 40)
         let intermediate = try BudgetRules.allowance(in: value, projectID: budgetProjectID,
                                                     parentTaskID: root, editingTaskID: bridge)
-        #expect(intermediate.maximumSeconds == 60)
-        #expect(intermediate.minimumSeconds == 60)
+        #expect(intermediate.maximumMinutes == 60)
+        #expect(intermediate.minimumMinutes == 60)
         let fresh = try BudgetRules.allowance(in: value, projectID: budgetProjectID,
                                              parentTaskID: bridge, editingTaskID: nil)
-        #expect(fresh.maximumSeconds == 0)
+        #expect(fresh.maximumMinutes == 0)
         let lowered = snapshot(tasks: rows.map { $0.id == root ? task(root, budget: 99) : $0 })
         #expect(SnapshotValidator.violations(in: lowered).contains { $0.code == .allocation && $0.recordID == root })
         let removable = snapshot(tasks: [task(root, budget: 100), task(child, parent: root, budget: 60),
@@ -67,11 +69,11 @@ import Testing
         #expect(!SnapshotValidator.violations(in: removable).contains { $0.code == .allocation })
         let removed = snapshot(tasks: [task(root, budget: 100), task(child, parent: root),
                                       task(grandchild, parent: child, budget: 60), task(sibling, parent: root, budget: 40)])
-        #expect(try BudgetRules.allocations(in: removed).first { $0.taskID == root }?.allocatedSeconds == 100)
+        #expect(try BudgetRules.allocations(in: removed).first { $0.taskID == root }?.allocatedMinutes == 100)
         #expect(!SnapshotValidator.violations(in: removed).contains { $0.code == .allocation })
         let huge = snapshot(tasks: [task(root, budget: .max), task(child, parent: root, budget: .max),
                                    task(sibling, parent: root, budget: .max)])
-        #expect(try BudgetRules.allocations(in: huge).first { $0.taskID == root }?.allocatedSeconds == Decimal(Int64.max) * 2)
+        #expect(try BudgetRules.allocations(in: huge).first { $0.taskID == root }?.allocatedMinutes == Decimal(Int64.max) * 2)
     }
 
     @Test func lifetimeRollupCheckpointZeroAndPendingExclusion() throws {
@@ -95,16 +97,17 @@ import Testing
 
     @Test func exactBandsAndMalformedSnapshotsFailClosed() throws {
         #expect(BudgetRules.band(used: 0, budget: 1) == .none)
-        #expect(BudgetRules.band(used: 1, budget: 1) == .hundred)
-        #expect(BudgetRules.band(used: 79, budget: 100) == .none)
-        #expect(BudgetRules.band(used: 80, budget: 100) == .eighty)
-        #expect(BudgetRules.band(used: 99, budget: 100) == .eighty)
-        #expect(BudgetRules.band(used: 100, budget: 100) == .hundred)
+        #expect(BudgetRules.band(used: 47, budget: 1) == .none)
+        #expect(BudgetRules.band(used: 48, budget: 1) == .eighty)
+        #expect(BudgetRules.band(used: 59, budget: 1) == .eighty)
+        #expect(BudgetRules.band(used: 60, budget: 1) == .hundred)
         #expect(BudgetRules.band(used: 1000, budget: nil) == .none)
-        let eighty = (Int64.max / 5) * 4 + ((Int64.max % 5) * 4 + 4) / 5
-        #expect(BudgetRules.band(used: Decimal(eighty - 1), budget: .max) == .none)
-        #expect(BudgetRules.band(used: Decimal(eighty), budget: .max) == .eighty)
-        #expect(BudgetRules.band(used: Decimal(Int64.max), budget: .max) == .hundred)
+        let maximum = Decimal(Int64.max) * 60
+        let eighty = Decimal(Int64.max) * 48
+        #expect(BudgetRules.band(used: eighty - 1, budget: .max) == .none)
+        #expect(BudgetRules.band(used: eighty, budget: .max) == .eighty)
+        #expect(BudgetRules.band(used: maximum - 1, budget: .max) == .eighty)
+        #expect(BudgetRules.band(used: maximum, budget: .max) == .hundred)
         let a = UUID(), b = UUID(), entryID = UUID()
         let values = [snapshot(tasks: [task(a, parent: b), task(b, parent: a)]),
                       snapshot(tasks: [task(a), task(a)]), snapshot(tasks: [task(a, parent: b)]),
@@ -138,9 +141,9 @@ extension BudgetTests {
         let first = try await store.transact(expectedRevision: 0) { db, _ in
             try db.runCommand("INSERT INTO projects(id,name,hourly_rate,currency_code) VALUES (?,?,?,?)",
                 bindings: [key(budgetProjectID), .text("Client"), .text("1"), .text("EUR")], expectedChanges: 1)
-            try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name,budget_seconds) VALUES (?,?,NULL,?,?)",
+            try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name,budget_minutes) VALUES (?,?,NULL,?,?)",
                 bindings: [key(root), key(budgetProjectID), .text("Root"), .integer(100)], expectedChanges: 1)
-            try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name,budget_seconds) VALUES (?,?,?,?,?)",
+            try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name,budget_minutes) VALUES (?,?,?,?,?)",
                 bindings: [key(leaf), key(budgetProjectID), key(root), .text("Leaf"), .integer(100)], expectedChanges: 1)
             try db.runCommand("INSERT INTO time_entries(id,task_id,start_at,end_at) VALUES (?,?,0,NULL)",
                 bindings: [key(entry), key(leaf)], expectedChanges: 1)
@@ -149,12 +152,12 @@ extension BudgetTests {
         }.snapshot
         #expect(first.revision == 1)
         let crossed = try await store.transact(expectedRevision: 1) { db, before in
-            try TimerTransition.checkpoint(before: before, entryID: entry, instant: 80, to: db)
-            try db.runCommand("UPDATE tasks SET name=?,budget_seconds=? WHERE id=?",
+            try TimerTransition.checkpoint(before: before, entryID: entry, instant: 4800, to: db)
+            try db.runCommand("UPDATE tasks SET name=?,budget_minutes=? WHERE id=?",
                 bindings: [.text("Renamed"), .integer(80), key(leaf)], expectedChanges: 1)
         }.snapshot
         #expect(crossed.revision == 2)
-        #expect(crossed.activeTimer?.checkpointAt == 80)
+        #expect(crossed.activeTimer?.checkpointAt == 4800)
         #expect(crossed.tasks.first { $0.id == root }?.lastWarnedThreshold == .eighty)
         #expect(crossed.tasks.first { $0.id == leaf }?.lastWarnedThreshold == .hundred)
         for fault in [CommitFault.beforeCommit, .commitRejected] {
@@ -168,26 +171,26 @@ extension BudgetTests {
         }
         do {
             _ = try await store.transact(expectedRevision: 2) { db, before in
-                try TimerTransition.checkpoint(before: before, entryID: entry, instant: 90, to: db)
-                try db.runCommand("UPDATE tasks SET name='Invalid',budget_seconds=101 WHERE id=?",
+                try TimerTransition.checkpoint(before: before, entryID: entry, instant: 5400, to: db)
+                try db.runCommand("UPDATE tasks SET name='Invalid',budget_minutes=101 WHERE id=?",
                     bindings: [key(leaf)], expectedChanges: 1)
             }
             Issue.record("allocation unexpectedly succeeded")
         } catch LibraryError.invalid(let errors) { #expect(errors.contains { $0.code == .allocation }) }
         #expect(try await store.snapshot() == crossed)
         let rearmed = try await store.transact(expectedRevision: 2) { db, _ in
-            try db.runCommand("UPDATE tasks SET budget_seconds=200 WHERE id=?", bindings: [key(root)], expectedChanges: 1)
-            try db.runCommand("UPDATE tasks SET budget_seconds=NULL WHERE id=?", bindings: [key(leaf)], expectedChanges: 1)
+            try db.runCommand("UPDATE tasks SET budget_minutes=200 WHERE id=?", bindings: [key(root)], expectedChanges: 1)
+            try db.runCommand("UPDATE tasks SET budget_minutes=NULL WHERE id=?", bindings: [key(leaf)], expectedChanges: 1)
         }.snapshot
         #expect(rearmed.tasks.allSatisfy { $0.lastWarnedThreshold == .none })
         let overrun = try await store.transact(expectedRevision: 3) { db, before in
-            try TimerTransition.checkpoint(before: before, entryID: entry, instant: 250, to: db)
+            try TimerTransition.checkpoint(before: before, entryID: entry, instant: 15000, to: db)
         }.snapshot
-        #expect(overrun.activeTimer?.checkpointAt == 250)
+        #expect(overrun.activeTimer?.checkpointAt == 15000)
         #expect(overrun.tasks.first { $0.id == root }?.lastWarnedThreshold == .hundred)
         let corrected = try await store.transact(expectedRevision: 4) { db, _ in
             try db.runCommand("DELETE FROM active_timer WHERE id=1", bindings: [], expectedChanges: 1)
-            try db.runCommand("UPDATE time_entries SET end_at=20 WHERE id=?", bindings: [key(entry)], expectedChanges: 1)
+            try db.runCommand("UPDATE time_entries SET end_at=1200 WHERE id=?", bindings: [key(entry)], expectedChanges: 1)
             try db.runCommand("UPDATE tasks SET parent_task_id=NULL WHERE id=?", bindings: [key(leaf)], expectedChanges: 1)
         }.snapshot
         #expect(corrected.tasks.allSatisfy { $0.lastWarnedThreshold == .none })

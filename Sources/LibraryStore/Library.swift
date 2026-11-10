@@ -188,13 +188,19 @@ public actor Library {
     }
 
     func createTaskOwned(_ request: TaskCreationRequest, expectedRevision: Int64,
-                         ownedTimerEntryID: UUID?, instant: Int64?) async throws -> TaskCreation {
+                         ownedTimerEntryID: UUID?, instant: Int64?,
+                         checkpointAt: Int64? = nil) async throws -> TaskCreation {
         try await acquire()
         defer { release() }
-        guard request.start == (instant != nil) else { throw TimerError.reviewRequired }
-        let committed = try await transactLocked(expectedRevision: expectedRevision, validationNow: instant) { db, before in
-            try createMigratingTask(request, before: before, db: db, ownedTimerEntryID: ownedTimerEntryID,
-                                    instant: instant, newEntryID: UUID())
+        guard request.start == (instant != nil),
+              checkpointAt == nil || (!request.start && request.budgetMinutes != nil) else {
+            throw TimerError.reviewRequired
+        }
+        let committed = try await transactLocked(expectedRevision: expectedRevision,
+                                                 validationNow: instant ?? checkpointAt) { db, before in
+            try createMigratingTask(request, before: before, db: db,
+                ownedTimerEntryID: ownedTimerEntryID, instant: instant,
+                newEntryID: UUID(), checkpointAt: checkpointAt)
         }
         if let generic = committed.value.genericID, let parent = request.parentID {
             migrationReceipt = MigrationReceipt(projectID: request.projectID, parentID: parent, genericID: generic,

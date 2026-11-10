@@ -8,13 +8,13 @@ import Testing
     let entry = TimeEntry(id: UUID(), taskID: task.id, startAt: 10, endAt: nil)
     let active = ActiveTimer(entryID: entry.id, checkpointAt: 20)
     let pending = PendingSleepInterval(id: UUID(), taskID: task.id, sleepAt: 1, wakeAt: nil)
-    let snapshot = LibrarySnapshot(schemaVersion: 1, revision: 4, projects: [project], tasks: [task],
+    let snapshot = LibrarySnapshot(schemaVersion: 2, revision: 4, projects: [project], tasks: [task],
                                    entries: [entry], activeTimer: active, pendingSleepIntervals: [pending])
     let copy = await Task.detached { snapshot }.value
     #expect(copy == snapshot)
     #expect(copy.projects[0].hourlyRate == Decimal(string: "123.456789")!)
     #expect(!project.isArchived)
-    #expect(task.parentTaskID == nil && task.budgetSeconds == nil)
+    #expect(task.parentTaskID == nil && task.budgetMinutes == nil)
     #expect(task.lastWarnedThreshold == .none)
     #expect(WarningThreshold.allCases.map(\.rawValue) == [0, 80, 100])
     #expect(snapshot.entries[0].endAt == nil)

@@ -5,9 +5,9 @@ public enum WorkspaceCommand: Sendable {
     case updateProject(id: UUID, name: String, rate: Decimal, currency: String,
                        confirmedPreviousCurrency: String?)
     case setArchived(id: UUID, archived: Bool)
-    case createTask(id: UUID, projectID: UUID, parentID: UUID?, name: String, budgetSeconds: Int64? = nil)
+    case createTask(id: UUID, projectID: UUID, parentID: UUID?, name: String, budgetMinutes: Int64? = nil)
     case renameTask(id: UUID, name: String)
-    case editTask(id: UUID, name: String, budgetSeconds: Int64?)
+    case editTask(id: UUID, name: String, budgetMinutes: Int64?)
 
     var changesBudget: Bool {
         switch self {
@@ -112,10 +112,10 @@ extension Library {
                 guard before.projects.contains(where: { $0.id == id }) else { throw CommandError.missingRecord }
                 try db.runCommand("UPDATE projects SET is_archived=? WHERE id=?",
                                   bindings: [.integer(archived ? 1 : 0), key(id)], expectedChanges: 1)
-            case let .createTask(id, projectID, parentID, title, budgetSeconds):
+            case let .createTask(id, projectID, parentID, title, budgetMinutes):
                 let base = try taskForInsertion(id: id, projectID: projectID, parentID: parentID, name: title, in: before)
                 let task = TaskRecord(id: base.id, projectID: base.projectID, parentTaskID: base.parentTaskID,
-                                      name: base.name, budgetSeconds: budgetSeconds)
+                                      name: base.name, budgetMinutes: budgetMinutes)
                 if let parentID {
                     guard !before.entries.contains(where: { $0.taskID == parentID }),
                           !before.pendingSleepIntervals.contains(where: { $0.taskID == parentID }) else {
@@ -123,26 +123,26 @@ extension Library {
                     }
                 }
                 try validate(tasks: before.tasks + [task])
-                try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name,budget_seconds) VALUES (?,?,?,?,?)",
+                try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name,budget_minutes) VALUES (?,?,?,?,?)",
                     bindings: [key(id), key(projectID), parentID.map(key) ?? .null, .text(task.name),
-                               budgetSeconds.map(SQLValue.integer) ?? .null], expectedChanges: 1)
-            case let .editTask(id, title, budgetSeconds):
+                               budgetMinutes.map(SQLValue.integer) ?? .null], expectedChanges: 1)
+            case let .editTask(id, title, budgetMinutes):
                 guard let old = before.tasks.first(where: { $0.id == id }),
                       let project = before.projects.first(where: { $0.id == old.projectID }) else {
                     throw CommandError.missingRecord
                 }
                 guard !project.isArchived else { throw CommandError.archivedProject }
                 let task = TaskRecord(id: id, projectID: old.projectID, parentTaskID: old.parentTaskID,
-                    name: name(title), budgetSeconds: budgetSeconds, lastWarnedThreshold: old.lastWarnedThreshold)
+                    name: name(title), budgetMinutes: budgetMinutes, lastWarnedThreshold: old.lastWarnedThreshold)
                 try validate(tasks: before.tasks.map { $0.id == id ? task : $0 })
-                try db.runCommand("UPDATE tasks SET name=?,budget_seconds=? WHERE id=?",
-                    bindings: [.text(task.name), budgetSeconds.map(SQLValue.integer) ?? .null, key(id)], expectedChanges: 1)
+                try db.runCommand("UPDATE tasks SET name=?,budget_minutes=? WHERE id=?",
+                    bindings: [.text(task.name), budgetMinutes.map(SQLValue.integer) ?? .null, key(id)], expectedChanges: 1)
             case let .renameTask(id, title):
                 guard let old = before.tasks.first(where: { $0.id == id }),
                       let project = before.projects.first(where: { $0.id == old.projectID }) else { throw CommandError.missingRecord }
                 guard !project.isArchived else { throw CommandError.archivedProject }
                 let task = TaskRecord(id: id, projectID: old.projectID, parentTaskID: old.parentTaskID,
-                                      name: name(title), budgetSeconds: old.budgetSeconds, lastWarnedThreshold: old.lastWarnedThreshold)
+                                      name: name(title), budgetMinutes: old.budgetMinutes, lastWarnedThreshold: old.lastWarnedThreshold)
                 try validate(tasks: before.tasks.map { $0.id == id ? task : $0 })
                 try db.runCommand("UPDATE tasks SET name=? WHERE id=?", bindings: [.text(task.name), key(id)], expectedChanges: 1)
             }

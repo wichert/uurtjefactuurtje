@@ -5,15 +5,17 @@ public struct TaskCreationRequest: Sendable {
     public let projectID: UUID
     public let parentID: UUID?
     public let name: String
+    public let budgetMinutes: Int64?
     public let confirmMigration: Bool
     public let start: Bool
 
     public init(id: UUID, projectID: UUID, parentID: UUID?, name: String,
-                confirmMigration: Bool, start: Bool) {
+                budgetMinutes: Int64? = nil, confirmMigration: Bool, start: Bool) {
         self.id = id
         self.projectID = projectID
         self.parentID = parentID
         self.name = name
+        self.budgetMinutes = budgetMinutes
         self.confirmMigration = confirmMigration
         self.start = start
     }
@@ -41,9 +43,11 @@ private func key(_ id: UUID) -> SQLValue { .text(id.uuidString.lowercased()) }
 
 func createMigratingTask(_ request: TaskCreationRequest, before: LibrarySnapshot,
                          db: isolated Storage, ownedTimerEntryID: UUID?, instant: Int64?,
-                         newEntryID: UUID) throws -> MigrationResult {
-    let task = try taskForInsertion(id: request.id, projectID: request.projectID,
-                                    parentID: request.parentID, name: request.name, in: before)
+                         newEntryID: UUID, checkpointAt: Int64? = nil) throws -> MigrationResult {
+    let base = try taskForInsertion(id: request.id, projectID: request.projectID,
+                                   parentID: request.parentID, name: request.name, in: before)
+    let task = TaskRecord(id: base.id, projectID: base.projectID, parentTaskID: base.parentTaskID,
+                          name: base.name, budgetMinutes: request.budgetMinutes)
     let entries = before.entries.filter { $0.taskID == request.parentID }
     let pending = before.pendingSleepIntervals.filter { $0.taskID == request.parentID }
     let migrate = request.parentID != nil && !before.tasks.contains { $0.parentTaskID == request.parentID }
@@ -56,6 +60,12 @@ func createMigratingTask(_ request: TaskCreationRequest, before: LibrarySnapshot
     }
     if migrate && !request.confirmMigration { throw CommandError.migrationConfirmationRequired }
     if migrate && NameKey.make(task.name) == NameKey.make("Generic") { throw CommandError.genericNameConflict }
+    if let checkpointAt {
+        guard request.budgetMinutes != nil, !request.start, let ownedTimerEntryID,
+              before.activeTimer?.entryID == ownedTimerEntryID else { throw TimerError.activeEntryChanged }
+        try TimerTransition.checkpoint(before: before, entryID: ownedTimerEntryID,
+                                       instant: checkpointAt, to: db)
+    }
     let generic = migrate ? TaskRecord(id: UUID(), projectID: request.projectID,
                                        parentTaskID: request.parentID, name: "Generic") : nil
     let movedEntries = before.entries.map { entry in
@@ -64,26 +74,42 @@ func createMigratingTask(_ request: TaskCreationRequest, before: LibrarySnapshot
     }
     let movedPending = before.pendingSleepIntervals.map { interval in
         interval.taskID == request.parentID && migrate
-            ? PendingSleepInterval(id: interval.id, taskID: generic!.id, sleepAt: interval.sleepAt, wakeAt: interval.wakeAt) : interval
+            ? PendingSleepInterval(id: interval.id, taskID: generic!.id,
+                                   sleepAt: interval.sleepAt, wakeAt: interval.wakeAt) : interval
+    }
+    let active = before.activeTimer.map {
+        ActiveTimer(entryID: $0.entryID, checkpointAt: checkpointAt ?? $0.checkpointAt)
     }
     let interim = LibrarySnapshot(schemaVersion: before.schemaVersion, revision: before.revision,
-                                  projects: before.projects, tasks: before.tasks + (generic.map { [$0] } ?? []) + [task],
-                                  entries: movedEntries, activeTimer: before.activeTimer, pendingSleepIntervals: movedPending)
-    try SnapshotValidator.validate(interim)
-    let transition = try instant.map { try TimerTransition.plan(before: interim, operation: .start(taskID: task.id),
-                                                                  instant: $0, newEntryID: newEntryID) }
+        projects: before.projects, tasks: before.tasks + (generic.map { [$0] } ?? []) + [task],
+        entries: movedEntries, activeTimer: active, pendingSleepIntervals: movedPending)
+    // Checkpointing or moving usage can change derived bands; the common write tail reconciles them.
+    let errors = SnapshotValidator.violations(in: interim).filter { $0.code != .warning }
+    if errors.contains(where: { $0.code == .allocation }) {
+        let allowance = try BudgetRules.allowance(in: interim, projectID: task.projectID,
+            parentTaskID: task.parentTaskID, editingTaskID: task.id)
+        throw CommandError.budgetAllocation(taskID: task.id, allowance: allowance)
+    }
+    guard errors.isEmpty else { throw LibraryError.invalid(errors) }
+    let transition = try instant.map {
+        try TimerTransition.plan(before: interim, operation: .start(taskID: task.id),
+                                 instant: $0, newEntryID: newEntryID)
+    }
     if let generic {
         try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name) VALUES (?,?,?,?)",
-                          bindings: [key(generic.id), key(generic.projectID), key(request.parentID!), .text(generic.name)], expectedChanges: 1)
+            bindings: [key(generic.id), key(generic.projectID), key(request.parentID!), .text(generic.name)],
+            expectedChanges: 1)
         try db.runCommand("UPDATE time_entries SET task_id=? WHERE task_id=?",
-                          bindings: [key(generic.id), key(request.parentID!)], expectedChanges: entries.count)
+            bindings: [key(generic.id), key(request.parentID!)], expectedChanges: entries.count)
         try db.runCommand("UPDATE pending_sleep_intervals SET task_id=? WHERE task_id=?",
-                          bindings: [key(generic.id), key(request.parentID!)], expectedChanges: pending.count)
+            bindings: [key(generic.id), key(request.parentID!)], expectedChanges: pending.count)
     }
-    try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name) VALUES (?,?,?,?)",
-                      bindings: [key(task.id), key(task.projectID), task.parentTaskID.map(key) ?? .null, .text(task.name)], expectedChanges: 1)
+    try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name,budget_minutes) VALUES (?,?,?,?,?)",
+        bindings: [key(task.id), key(task.projectID), task.parentTaskID.map(key) ?? .null,
+                   .text(task.name), task.budgetMinutes.map(SQLValue.integer) ?? .null], expectedChanges: 1)
     try transition?.apply(to: db)
-    return MigrationResult(genericID: generic?.id, entries: migrate ? entries.count : 0, pending: migrate ? pending.count : 0)
+    return MigrationResult(genericID: generic?.id, entries: migrate ? entries.count : 0,
+                           pending: migrate ? pending.count : 0)
 }
 
 struct MigrationReceipt: Sendable {

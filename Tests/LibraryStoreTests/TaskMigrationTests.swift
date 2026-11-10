@@ -274,3 +274,59 @@ import Testing
         await library.close()
     }
 }
+
+extension TaskMigrationTests {
+    @Test func creationBudgetAllocationCheckpointAndUndoStayAtomic() async throws {
+        let (directory, library, project, parent, before, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let budgeted = try await library.perform(.editTask(id: parent, name: "Parent", budgetMinutes: 2),
+                                                expectedRevision: before.revision)
+        let active = UUID()
+        let running = try await library.performTimer(.start(taskID: parent),
+            expectedRevision: budgeted.revision, instant: 30, newEntryID: active)
+        let child = UUID()
+        let invalid = TaskCreationRequest(id: child, projectID: project, parentID: parent, name: "Child",
+            budgetMinutes: 3, confirmMigration: true, start: false)
+        do {
+            _ = try await library.createTaskOwned(invalid, expectedRevision: running.revision,
+                ownedTimerEntryID: active, instant: nil, checkpointAt: 126)
+            Issue.record("allocation unexpectedly accepted")
+        } catch CommandError.budgetAllocation(let id, let allowance) {
+            #expect(id == child)
+            #expect(allowance.limitingAncestorID == parent && allowance.maximumMinutes == 2)
+        }
+        #expect(try await library.snapshot() == running)
+        let request = TaskCreationRequest(id: child, projectID: project, parentID: parent, name: "Child",
+            budgetMinutes: 1, confirmMigration: true, start: false)
+        let result = try await library.createTaskOwned(request, expectedRevision: running.revision,
+            ownedTimerEntryID: active, instant: nil, checkpointAt: 126)
+        #expect(result.snapshot.revision == running.revision + 1)
+        #expect(result.snapshot.activeTimer == ActiveTimer(entryID: active, checkpointAt: 126))
+        #expect(result.snapshot.tasks.first { $0.id == child }?.budgetMinutes == 1)
+        let generic = try #require(result.genericID)
+        #expect(result.snapshot.tasks.first { $0.id == generic }?.budgetMinutes == nil)
+        #expect(result.snapshot.entries.first { $0.id == active }?.taskID == generic)
+        #expect(result.snapshot.tasks.first { $0.id == parent }?.lastWarnedThreshold == .eighty)
+        guard case let .available(receipt) = try await library.migrationUndoAvailability(ownedTimerEntryID: active)
+        else { Issue.record("migration receipt unavailable"); await library.close(); return }
+        let undone = try await library.undoTaskMigration(receiptID: receipt, ownedTimerEntryID: active)
+        #expect(undone.activeTimer == result.snapshot.activeTimer)
+        #expect(undone.entries.first { $0.id == active }?.taskID == parent)
+        #expect(!undone.tasks.contains { $0.id == child || $0.id == generic })
+        await library.close()
+    }
+
+    @Test func budgetedCreateAndStartRetainsStartContract() async throws {
+        let (directory, library, project, parent, before, _) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let child = UUID()
+        let request = TaskCreationRequest(id: child, projectID: project, parentID: parent, name: "Child",
+            budgetMinutes: 90, confirmMigration: true, start: true)
+        let result = try await library.createTaskOwned(request, expectedRevision: before.revision,
+                                                       ownedTimerEntryID: nil, instant: 30)
+        #expect(result.snapshot.tasks.first { $0.id == child }?.budgetMinutes == 90)
+        #expect(result.snapshot.entries.contains { $0.taskID == child && $0.startAt == 30 && $0.endAt == nil })
+        #expect(result.snapshot.revision == before.revision + 1)
+        await library.close()
+    }
+}

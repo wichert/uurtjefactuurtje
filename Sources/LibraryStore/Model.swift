@@ -26,16 +26,16 @@ public struct TaskRecord: Identifiable, Equatable, Sendable {
     public let projectID: UUID
     public let parentTaskID: UUID?
     public let name: String
-    public let budgetSeconds: Int64?
+    public let budgetMinutes: Int64?
     public let lastWarnedThreshold: WarningThreshold
 
     public init(id: UUID, projectID: UUID, parentTaskID: UUID? = nil, name: String,
-                budgetSeconds: Int64? = nil, lastWarnedThreshold: WarningThreshold = .none) {
+                budgetMinutes: Int64? = nil, lastWarnedThreshold: WarningThreshold = .none) {
         self.id = id
         self.projectID = projectID
         self.parentTaskID = parentTaskID
         self.name = name
-        self.budgetSeconds = budgetSeconds
+        self.budgetMinutes = budgetMinutes
         self.lastWarnedThreshold = lastWarnedThreshold
     }
 }
@@ -147,7 +147,7 @@ extension LibrarySnapshot {
                 projects: value.projects,
                 tasks: value.tasks.map {
                     TaskRecord(id: $0.id, projectID: $0.projectID, parentTaskID: $0.parentTaskID,
-                               name: $0.name, budgetSeconds: $0.budgetSeconds, lastWarnedThreshold: .none)
+                               name: $0.name, budgetMinutes: $0.budgetMinutes, lastWarnedThreshold: .none)
                 }, entries: value.entries,
                 activeTimer: value.activeTimer.map { ActiveTimer(entryID: $0.entryID, checkpointAt: 0) },
                 pendingSleepIntervals: value.pendingSleepIntervals)

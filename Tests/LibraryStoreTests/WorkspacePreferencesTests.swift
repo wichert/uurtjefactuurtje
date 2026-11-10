@@ -175,9 +175,9 @@ private final class PreferenceObservation: @unchecked Sendable {
         let directory = preferenceDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let project = UUID(), task = UUID(), entry = UUID()
-        let before = LibrarySnapshot(schemaVersion: 1, revision: 12,
+        let before = LibrarySnapshot(schemaVersion: 2, revision: 12,
             projects: [Project(id: project, name: "Client", hourlyRate: 25, currencyCode: "EUR")],
-            tasks: [TaskRecord(id: task, projectID: project, name: "Work", budgetSeconds: 100, lastWarnedThreshold: .eighty)],
+            tasks: [TaskRecord(id: task, projectID: project, name: "Work", budgetMinutes: 100, lastWarnedThreshold: .eighty)],
             entries: [TimeEntry(id: entry, taskID: task, startAt: 10, endAt: nil)],
             activeTimer: ActiveTimer(entryID: entry, checkpointAt: 20),
             pendingSleepIntervals: [PendingSleepInterval(id: UUID(), taskID: task, sleepAt: 1, wakeAt: 5)])

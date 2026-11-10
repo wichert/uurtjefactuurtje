@@ -7,7 +7,7 @@ private struct SleepFixture: Sendable {
     func state(_ entries: [TimeEntry] = [], active: ActiveTimer? = nil,
                pending: [PendingSleepInterval] = [], archived: Bool = false,
                renamed: Bool = false) -> LibrarySnapshot {
-        LibrarySnapshot(schemaVersion: 1, revision: 0,
+        LibrarySnapshot(schemaVersion: 2, revision: 0,
             projects: [Project(id: project, name: "Client", hourlyRate: 1, currencyCode: "EUR", isArchived: archived),
                        Project(id: otherProject, name: "Other", hourlyRate: 2, currencyCode: "USD")],
             tasks: [TaskRecord(id: root, projectID: project, name: "Root"),
