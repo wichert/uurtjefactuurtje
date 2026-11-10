@@ -18,14 +18,14 @@ import Testing
             for bad in ["", "-1", "NaN", "1e3", "12junk", "12\(sep)", "\(sep)5", "1\(sep)2\(sep)3", "1 000", "1,000.00", "1.000,00"] {
                 #expect(RateInput.parse(bad, locale: locale) == nil)
             }
-            #expect(BudgetInput.parseHours("1\(sep)5", locale: locale) == 5400)
+            #expect(BudgetInput.parseHours("1\(sep)5", locale: locale) == 90)
             #expect(BudgetInput.parseHours("1\(sep)5junk", locale: locale) == nil)
         }
     }
     @Test func unchangedBudgetAndLocationConsent() {
         var d = TaskDraft(id: UUID(), isNew: false, observedRevision: 4, projectID: UUID(), parentID: nil,
             name: "Draft", migrationAccepted: true, budgetEnabled: true, budgetHours: "rounded display",
-            originalBudgetSeconds: 1, originalBudgetText: "rounded display")
+            originalBudgetMinutes: 1, originalBudgetText: "rounded display")
         #expect(d.parsedBudget == 1)
         d.budgetHours = "not hours"; #expect(d.parsedBudget == nil)
         d.budgetEnabled = false; #expect(d.parsedBudget == nil)
@@ -81,7 +81,7 @@ import Testing
             #expect(t.workspace.snapshot == current)
             let committed = try await accepted.value
             #expect(committed.snapshot.activeTimer != nil)
-            #expect(committed.snapshot.tasks.first(where: { $0.id == running })?.budgetSeconds == nil)
+            #expect(committed.snapshot.tasks.first(where: { $0.id == running })?.budgetMinutes == nil)
             _ = try await t.workspace.enqueueTimer(.stop(expectedEntryID: committed.snapshot.activeTimer?.entryID)).value
         }
     }
@@ -248,7 +248,7 @@ import Testing
         let task = TaskRecord(id: UUID(), projectID: project.id, name: "Leaf")
         let entry = TimeEntry(id: UUID(), taskID: task.id, startAt: 120, endAt: nil)
         let active = ActiveTimer(entryID: entry.id, checkpointAt: 137)
-        let snapshot = LibrarySnapshot(schemaVersion: 1, revision: 0, projects: [project], tasks: [task],
+        let snapshot = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: [project], tasks: [task],
             entries: [entry], activeTimer: active, pendingSleepIntervals: [])
         let review = try SleepPlanner.interruption(endAt: nil, in: snapshot)
         let zone = try #require(TimeZone(secondsFromGMT: 0))
@@ -363,7 +363,7 @@ import Testing
         let p = Project(id: UUID(), name: "Project", hourlyRate: 0, currencyCode: "EUR")
         let owner = TaskRecord(id: UUID(), projectID: p.id, name: "Leaf")
         let pending = PendingSleepInterval(id: UUID(), taskID: owner.id, sleepAt: 100, wakeAt: nil)
-        let s = LibrarySnapshot(schemaVersion: 1, revision: 0, projects: [p], tasks: [owner], entries: [], activeTimer: nil, pendingSleepIntervals: [pending])
+        let s = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: [p], tasks: [owner], entries: [], activeTimer: nil, pendingSleepIntervals: [pending])
         #expect(throws: (any Error).self) { try SleepPlanner.include(pending, endAt: nil, in: s) }
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = try #require(TimeZone(secondsFromGMT: 0))
@@ -383,7 +383,7 @@ import Testing
         #expect(explicitInstant == 240)
         #expect(try SleepPlanner.include(pending, endAt: explicitInstant, in: s).pending == pending)
         let known = PendingSleepInterval(id: UUID(), taskID: owner.id, sleepAt: 100, wakeAt: 217)
-        let knownSnapshot = LibrarySnapshot(schemaVersion: 1, revision: 0, projects: [p], tasks: [owner],
+        let knownSnapshot = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: [p], tasks: [owner],
             entries: [], activeTimer: nil, pendingSleepIntervals: [known])
         let knownPlan = try SleepPlanner.include(known, endAt: nil, in: knownSnapshot)
         switch knownPlan.correction.draft {
@@ -396,7 +396,7 @@ import Testing
         let skipped = try SleepPlanner.skip(pending, in: s); #expect(skipped.pending == pending)
         let entry = TimeEntry(id: UUID(), taskID: owner.id, startAt: 10, endAt: nil)
         let active = ActiveTimer(entryID: entry.id, checkpointAt: 90)
-        let interrupted = LibrarySnapshot(schemaVersion: 1, revision: 0, projects: [p], tasks: [owner], entries: [entry], activeTimer: active, pendingSleepIntervals: [])
+        let interrupted = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: [p], tasks: [owner], entries: [entry], activeTimer: active, pendingSleepIntervals: [])
         #expect(try SleepPlanner.interruption(endAt: 90, in: interrupted).requestedEnd == 90)
         #expect(try SleepPlanner.interruption(endAt: nil, in: interrupted).correction == nil)
     }
@@ -409,7 +409,7 @@ import Testing
             confirmedPreviousCurrency: nil, archiveConfirmed: false)
         let t = TaskDraft(id: UUID(), isNew: true, observedRevision: 4,
             projectID: UUID(), parentID: nil, name: "Draft", migrationAccepted: false,
-            budgetEnabled: false, budgetHours: "", originalBudgetSeconds: nil, originalBudgetText: "")
+            budgetEnabled: false, budgetHours: "", originalBudgetMinutes: nil, originalBudgetText: "")
         #expect(p.reviewedSnapshot == nil)
         #expect(t.reviewedSnapshot == nil)
         #expect(p.observedRevision == 4 && t.observedRevision == 4)
@@ -503,7 +503,7 @@ import Testing
             guard case .task(let savingAncestor) = t.sheet else { Issue.record("Missing second ancestor"); return }
             #expect(t.begin(token))
             let saved = try await t.workspace.enqueueSubmit(
-                .editTask(id: root, name: savingAncestor.name, budgetSeconds: 100_000),
+                .editTask(id: root, name: savingAncestor.name, budgetMinutes: 100_000),
                 expectedRevision: savingAncestor.observedRevision, reviewedSnapshot: savingAncestor.reviewedSnapshot).value
             t.complete(token)
             guard case .task(let restored) = t.sheet else { Issue.record("Missing child after save"); return }
@@ -601,20 +601,286 @@ import Testing
             guard case .task(let ancestor) = t.sheet else { Issue.record("Missing ancestor"); return }
             let token = t.routeToken
             #expect(t.begin(token))
-            let saved = try await t.workspace.enqueueSubmit(.editTask(id: root, name: "Root edited", budgetSeconds: 100_000),
+            let saved = try await t.workspace.enqueueSubmit(.editTask(id: root, name: "Root edited", budgetMinutes: 100_000),
                 expectedRevision: ancestor.observedRevision, reviewedSnapshot: ancestor.reviewedSnapshot).value
             t.complete(token)
             guard case .task(let restored) = t.sheet else { Issue.record("Child not restored"); return }
             #expect(t.suspendedTaskDraft == nil && !t.acceptedWork)
             #expect(restored.id == child.id && restored.name == child.name)
             #expect(restored.budgetEnabled == child.budgetEnabled && restored.budgetHours == child.budgetHours)
-            #expect(restored.originalBudgetSeconds == child.originalBudgetSeconds && restored.originalBudgetText == child.originalBudgetText)
+            #expect(restored.originalBudgetMinutes == child.originalBudgetMinutes && restored.originalBudgetText == child.originalBudgetText)
             #expect(restored.migrationAccepted == child.migrationAccepted)
             #expect(restored.reviewedSnapshot == child.reviewedSnapshot && restored.observedRevision == child.observedRevision)
             #expect(t.selectedProjectID == p && t.selectedTaskID == leaf)
             #expect(t.destination == .reports && t.search == "retained filter" && t.reveal?.id == reveal)
             let baseline = try #require(restored.reviewedSnapshot)
             #expect(!baseline.editorRelevantEquals(saved))
+        }
+    }
+}
+
+@Suite @MainActor struct ContextualTaskBudgetTests {
+    private func draft(minutes: Int64?, locale: Locale, isNew: Bool = false) -> TaskDraft {
+        let text = minutes.map { BudgetInput.text($0, locale: locale) } ?? ""
+        return TaskDraft(id: UUID(), isNew: isNew, observedRevision: 0,
+            projectID: UUID(), parentID: nil, name: "Draft", migrationAccepted: false,
+            budgetEnabled: minutes != nil, budgetHours: text,
+            originalBudgetMinutes: minutes, originalBudgetText: text)
+    }
+
+    @Test func roundedGeneratedStepsStayExactAcrossLocalesAndManualChanges() {
+        for locale in [Locale(identifier: "en_US"), Locale(identifier: "nl_NL")] {
+            var d = draft(minutes: 1, locale: locale)
+            #expect(BudgetInput.parseHours(d.budgetHours, locale: locale) == nil)
+            #expect(d.budgetValue(locale: locale) == 1)
+            #expect(d.budgetAfterStep(by: -30, locale: locale) == nil)
+            let original = d.budgetHours
+            d.stepBudget(by: -30, locale: locale)
+            #expect(d.budgetHours == original)
+            d.stepBudget(by: 30, locale: locale)
+            #expect(d.budgetHours == BudgetInput.text(31, locale: locale))
+            #expect(d.generatedBudgetMinutes == 31)
+            #expect(BudgetInput.parseHours(d.budgetHours, locale: locale) == nil)
+            #expect(d.budgetValue(locale: locale) == 31)
+            d.stepBudget(by: 30, locale: locale)
+            #expect(d.budgetValue(locale: locale) == 61)
+            d.stepBudget(by: -30, locale: locale)
+            d.stepBudget(by: -30, locale: locale)
+            #expect(d.budgetValue(locale: locale) == 1)
+            d.budgetHours = "not hours"
+            #expect(d.budgetValue(locale: locale) == nil)
+            #expect(d.budgetAfterStep(by: 30, locale: locale) == nil)
+            d.stepBudget(by: 30, locale: locale)
+            #expect(d.budgetHours == "not hours")
+            d.budgetHours = "1\(locale.decimalSeparator!)5"
+            #expect(d.budgetValue(locale: locale) == 90)
+            d.stepBudget(by: 30, locale: locale)
+            #expect(d.budgetValue(locale: locale) == 120)
+            d.budgetEnabled = false
+            #expect(d.budgetValue(locale: locale) == nil)
+            #expect(d.budgetAfterStep(by: 30, locale: locale) == nil)
+            d.budgetEnabled = true
+            #expect(d.budgetValue(locale: locale) == 120)
+        }
+    }
+
+    @Test func emptyInvalidPositiveAndOverflowBoundaries() {
+        let locale = Locale(identifier: "en_US_POSIX")
+        var empty = draft(minutes: nil, locale: locale, isNew: true)
+        empty.budgetEnabled = true
+        #expect(empty.budgetValue(locale: locale) == nil)
+        #expect(empty.budgetAfterStep(by: -30, locale: locale) == nil)
+        empty.budgetHours = " \n "
+        empty.stepBudget(by: 30, locale: locale)
+        #expect(empty.budgetValue(locale: locale) == 30)
+        #expect(empty.budgetAfterStep(by: -30, locale: locale) == nil)
+        empty.stepBudget(by: -30, locale: locale)
+        #expect(empty.budgetValue(locale: locale) == 30)
+        for text in ["0", "-1", "0.001", "1e3", "1,000", "2x", "1537228672809129310"] {
+            empty.budgetHours = text
+            #expect(empty.budgetValue(locale: locale) == nil)
+            #expect(empty.budgetAfterStep(by: 30, locale: locale) == nil)
+            empty.stepBudget(by: 30, locale: locale)
+            #expect(empty.budgetHours == text)
+        }
+        var edge = draft(minutes: Int64.max - 30, locale: locale)
+        edge.stepBudget(by: 30, locale: locale)
+        #expect(edge.budgetValue(locale: locale) == Int64.max)
+        let maxText = edge.budgetHours
+        #expect(edge.budgetAfterStep(by: 30, locale: locale) == nil)
+        edge.stepBudget(by: 30, locale: locale)
+        #expect(edge.budgetHours == maxText)
+        #expect(edge.budgetValue(locale: locale) == Int64.max)
+        edge.stepBudget(by: -30, locale: locale)
+        #expect(edge.budgetValue(locale: locale) == Int64.max - 30)
+        var oneAbove = draft(minutes: Int64.max - 29, locale: locale)
+        #expect(oneAbove.budgetAfterStep(by: 30, locale: locale) == nil)
+        oneAbove.stepBudget(by: 30, locale: locale)
+        #expect(oneAbove.budgetValue(locale: locale) == Int64.max - 29)
+        var invalidOriginal = draft(minutes: 0, locale: locale)
+        #expect(invalidOriginal.budgetValue(locale: locale) == nil)
+        invalidOriginal = draft(minutes: -1, locale: locale)
+        #expect(invalidOriginal.budgetValue(locale: locale) == nil)
+    }
+
+    @Test func creationAndEditingRejectInvalidEnabledBudgetBeforeRequest() async throws {
+        try await withTrack { t, _ in
+            let p = try await project(t), leaf = try await task(t, project: p)
+            for isNew in [true, false] {
+                if isNew { t.newTask(projectID: p) } else { t.editTask(leaf) }
+                guard case .task(var d) = t.sheet else { Issue.record("Missing draft"); return }
+                d.name = "Valid name"
+                let s = try #require(t.workspace.snapshot)
+                d.budgetEnabled = true
+                for invalid in ["", "0", "-1", "garbage", "0\(Locale.current.decimalSeparator ?? ".")001"] {
+                    d.budgetHours = invalid
+                    #expect(d.inputError(in: s) == "Enter positive budget hours that represent a whole number of minutes.")
+                }
+                d.budgetEnabled = false
+                #expect(d.inputError(in: s) == nil)
+                #expect(d.request(start: false).budgetMinutes == nil)
+                d.budgetEnabled = true
+                d.budgetHours = "2"
+                #expect(d.inputError(in: s) == nil)
+                #expect(d.parsedBudget == 120)
+                #expect(t.workspace.snapshot == s)
+                t.cancelSheet()
+            }
+        }
+    }
+
+    @Test func contextualCreationCarriesBudgetForBothCommandsAndBudgetCanBeCleared() async throws {
+        try await withTrack { t, _ in
+            let p = try await project(t), root = try await task(t, project: p, name: "Root")
+            for start in [false, true] {
+                t.newTask(projectID: p, parentID: root)
+                guard case .task(var d) = t.sheet else { Issue.record("Missing new task"); return }
+                #expect(!d.budgetEnabled && d.budgetHours.isEmpty && d.originalBudgetMinutes == nil)
+                #expect(d.projectID == p && d.parentID == root)
+                d.name = start ? "Running" : "Saved"
+                d.budgetEnabled = true
+                d.stepBudget(by: 30)
+                let s = try #require(t.workspace.snapshot)
+                #expect(d.inputError(in: s) == nil)
+                let request = d.request(start: start)
+                #expect(request.id == d.id && request.projectID == p && request.parentID == root)
+                #expect(request.budgetMinutes == 30 && request.start == start)
+                let created = try await t.workspace.enqueueTaskCreation(request, expectedRevision: d.observedRevision,
+                    reviewedSnapshot: d.reviewedSnapshot).value
+                #expect(created.snapshot.tasks.first(where: { $0.id == d.id })?.budgetMinutes == 30)
+                if start {
+                    let active = try #require(created.snapshot.activeTimer)
+                    #expect(created.snapshot.entries.first(where: { $0.id == active.entryID })?.taskID == d.id)
+                    _ = try await t.workspace.enqueueTimer(.stop(expectedEntryID: active.entryID)).value
+                } else { #expect(created.snapshot.activeTimer == nil) }
+                t.cancelSheet()
+                t.editTask(d.id)
+                guard case .task(var edit) = t.sheet else { Issue.record("Missing edit"); return }
+                #expect(edit.originalBudgetMinutes == 30 && edit.parsedBudget == 30)
+                edit.budgetEnabled = false
+                let latest = try #require(t.workspace.snapshot)
+                _ = try await t.workspace.enqueueSubmit(.editTask(id: edit.id, name: edit.name, budgetMinutes: edit.parsedBudget),
+                    expectedRevision: latest.revision, reviewedSnapshot: edit.reviewedSnapshot).value
+                #expect(t.workspace.snapshot?.tasks.first(where: { $0.id == edit.id })?.budgetMinutes == nil)
+                t.cancelSheet()
+            }
+        }
+    }
+
+    @Test func budgetedMigrationStillRequiresConsentAndKeepsGenericBudgetless() async throws {
+        try await withTrack { t, _ in
+            let p = try await project(t), parent = try await task(t, project: p)
+            let before = try #require(t.workspace.snapshot)
+            let preview = try CorrectionPlanner.preview(.add(id: UUID(), taskID: parent, startAt: 100, endAt: 200), in: before)
+            _ = try await t.workspace.enqueueCorrection(.apply(preview)).value
+            t.newTask(projectID: p, parentID: parent)
+            guard case .task(var d) = t.sheet else { Issue.record("Missing draft"); return }
+            d.name = "Budgeted child"; d.budgetEnabled = true; d.budgetHours = "2"
+            let s = try #require(t.workspace.snapshot)
+            do {
+                _ = try await t.workspace.enqueueTaskCreation(d.request(start: false), expectedRevision: d.observedRevision,
+                    reviewedSnapshot: d.reviewedSnapshot).value
+                Issue.record("Unconfirmed budgeted migration succeeded")
+            } catch { #expect(t.workspace.snapshot == s) }
+            d.migrationAccepted = true
+            let result = try await t.workspace.enqueueTaskCreation(d.request(start: false), expectedRevision: d.observedRevision,
+                reviewedSnapshot: d.reviewedSnapshot).value
+            let generic = try #require(result.genericID)
+            #expect(result.movedEntryCount == 1)
+            #expect(result.snapshot.tasks.first(where: { $0.id == d.id })?.budgetMinutes == 120)
+            #expect(result.snapshot.tasks.first(where: { $0.id == generic })?.budgetMinutes == nil)
+            #expect(result.snapshot.entries.first?.taskID == generic)
+        }
+    }
+
+    @Test func allowanceIsMinuteExactAndOverBudgetCreationDoesNotCommit() async throws {
+        try await withTrack { t, _ in
+            let p = try await project(t), root = try await task(t, project: p, name: "Root")
+            let sibling = try await task(t, project: p, parent: root, name: "Sibling")
+            var s = try #require(t.workspace.snapshot)
+            _ = try await t.workspace.enqueueSubmit(.editTask(id: root, name: "Root", budgetMinutes: 120), expectedRevision: s.revision).value
+            s = try #require(t.workspace.snapshot)
+            _ = try await t.workspace.enqueueSubmit(.editTask(id: sibling, name: "Sibling", budgetMinutes: 90), expectedRevision: s.revision).value
+            t.newTask(projectID: p, parentID: root)
+            guard case .task(var d) = t.sheet else { Issue.record("Missing draft"); return }
+            d.name = "Too much"; d.budgetEnabled = true; d.budgetHours = "1"
+            s = try #require(t.workspace.snapshot)
+            let allowance = try BudgetRules.allowance(in: s, projectID: p, parentTaskID: root, editingTaskID: nil)
+            #expect(allowance.minimumMinutes == 0 && allowance.maximumMinutes == 30)
+            #expect(allowance.limitingAncestorID == root)
+            do {
+                _ = try await t.workspace.enqueueTaskCreation(d.request(start: false), expectedRevision: d.observedRevision,
+                    reviewedSnapshot: d.reviewedSnapshot).value
+                Issue.record("Over-budget creation succeeded")
+            } catch {
+                guard case CommandError.budgetAllocation(let id, let returned) = error else { throw error }
+                #expect(id == d.id && returned == allowance)
+                #expect(t.workspace.snapshot == s)
+            }
+        }
+    }
+
+    @Test func generatedCacheAndConsentSurviveAncestorCancelAndSaveWithoutRebasing() async throws {
+        try await withTrack { t, _ in
+            let p = try await project(t), root = try await task(t, project: p, name: "Root")
+            t.newTask(projectID: p, parentID: root)
+            guard case .task(var d) = t.sheet else { Issue.record("Missing child"); return }
+            d.name = "Unsent child"; d.budgetEnabled = true
+            // Exactly three minutes in either supported decimal locale.
+            d.budgetHours = "0\(Locale.current.decimalSeparator ?? ".")05"
+            d.stepBudget(by: 30)
+            #expect(d.parsedBudget == 33)
+            d.migrationAccepted = true
+            t.updateTaskDraft(d)
+            let original = try #require(d.reviewedSnapshot)
+            for save in [false, true] {
+                t.editConstrainingBudget(taskID: root)
+                #expect(t.suspendedTaskDraft?.generatedBudgetMinutes == 33)
+                guard case .task(let ancestor) = t.sheet else { Issue.record("Missing ancestor"); return }
+                if save {
+                    let token = t.routeToken
+                    #expect(t.begin(token))
+                    _ = try await t.workspace.enqueueSubmit(.editTask(id: root, name: ancestor.name, budgetMinutes: 120),
+                        expectedRevision: ancestor.observedRevision, reviewedSnapshot: ancestor.reviewedSnapshot).value
+                    t.complete(token)
+                } else { t.cancelSheet() }
+                guard case .task(let restored) = t.sheet else { Issue.record("Lost child"); return }
+                #expect(restored.id == d.id && restored.projectID == p && restored.parentID == root)
+                #expect(restored.name == d.name && restored.migrationAccepted)
+                #expect(restored.budgetHours == d.budgetHours && restored.parsedBudget == 33)
+                #expect(restored.generatedBudgetMinutes == d.generatedBudgetMinutes)
+                #expect(restored.generatedBudgetText == d.generatedBudgetText)
+                #expect(restored.reviewedSnapshot == original && restored.observedRevision == d.observedRevision)
+            }
+            let latest = try #require(t.workspace.snapshot)
+            #expect(!original.editorRelevantEquals(latest))
+            do {
+                _ = try await t.workspace.enqueueTaskCreation(d.request(start: false), expectedRevision: d.observedRevision,
+                    reviewedSnapshot: d.reviewedSnapshot).value
+                Issue.record("Stale budgeted draft accepted")
+            } catch { #expect(t.workspace.snapshot == latest) }
+            #expect(t.suspendedTaskDraft == nil && !t.acceptedWork)
+        }
+    }
+
+    @Test func fixedCreationLocationRejectsUnavailableProjectAndForeignParent() async throws {
+        try await withTrack { t, _ in
+            let p = try await project(t), q = try await project(t, name: "Other")
+            let foreign = try await task(t, project: q)
+            t.newTask(projectID: p)
+            guard case .task(var d) = t.sheet else { Issue.record("Missing draft"); return }
+            d.name = "New"
+            let s = try #require(t.workspace.snapshot)
+            #expect(d.inputError(in: s) == nil)
+            d.parentID = foreign
+            #expect(d.inputError(in: s) == "This parent is unavailable. Cancel and select a task in this project.")
+            d.parentID = UUID()
+            #expect(d.inputError(in: s) != nil)
+            d.parentID = nil; d.projectID = UUID()
+            #expect(d.inputError(in: s) == "This project is unavailable for new tasks. Cancel and select an active project.")
+            d.projectID = p
+            let archived = try await t.workspace.enqueueSubmit(.setArchived(id: p, archived: true), expectedRevision: s.revision).value
+            #expect(d.inputError(in: archived) == "This project is unavailable for new tasks. Cancel and select an active project.")
         }
     }
 }

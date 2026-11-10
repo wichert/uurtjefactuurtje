@@ -101,6 +101,12 @@ struct WorkspaceOperations: Sendable {
         return sample.instant
     }
 
+    /// Safe provisional end for Track; nil means use the active timer's saved checkpoint.
+    public func trackLiveEnd() throws -> Int64? {
+        guard let snapshot else { throw LibraryAccessError.unavailable }
+        return try safeLiveEnd(in: snapshot)
+    }
+
     public func projectReport(_ projectID: UUID, period: ReportPeriod, calendar: Calendar,
                               firstWeekday: Int = 2, scopeTaskID: UUID? = nil) throws -> ProjectReport {
         guard let snapshot else { throw LibraryAccessError.unavailable }

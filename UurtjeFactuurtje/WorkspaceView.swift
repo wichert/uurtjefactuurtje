@@ -20,7 +20,10 @@ struct WorkspaceView<ReportsContent: View>: View {
             WorkspaceFeedback(host: host)
             if host.available, presentation.workspace.snapshot != nil {
                 switch presentation.destination {
-                case .track: TrackView(presentation: presentation)
+                case .track:
+                    TrackView(presentation: presentation) { projectID, taskID in
+                        host.openProjectReport(projectID: projectID, scopeTaskID: taskID)
+                    }
                 case .reports: reports()
                 }
             } else {

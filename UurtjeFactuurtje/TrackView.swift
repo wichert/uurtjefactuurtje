@@ -3,118 +3,163 @@ import LibraryStore
 
 struct TrackView: View {
     @Bindable var presentation: TrackPresentation
-    @FocusState private var listFocused: Bool
+    let openReport: (UUID, UUID?) -> Void
+    @FocusState private var tableFocused: Bool
+    @State private var mountedRows: Set<TrackRowID> = []
     private var model: WorkspaceModel { presentation.workspace }
+
+
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let count = model.snapshot?.pendingSleepIntervals.count, count > 0 {
                 HStack {
                     Text("\(count) pending sleep interval(s) — unbilled")
-                        .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Review pending time…") { presentation.reviewTime() }
                 }
-                .accessibilityElement(children: .contain)
             }
-            HStack {
-                Picker("Project", selection: $presentation.selectedProjectID) {
-                    Text("Select project").tag(UUID?.none)
-                    ForEach(presentation.projects) {
-                        Text($0.name + ($0.isArchived ? " (archived)" : "")).tag(Optional($0.id))
-                    }
-                }
-                .frame(maxWidth: 300)
-                Toggle("Show archived", isOn: $presentation.showArchived)
-            }
-            TextField("Search full project / task path", text: $presentation.search)
             HStack {
                 Button("New project") { presentation.editProject() }
-                if let project = presentation.projects.first(where: { $0.id == presentation.selectedProjectID }) {
-                    Button("Edit project") { presentation.editProject(project.id) }
-                    Button("New task") { presentation.newTask(projectID: project.id) }.disabled(project.isArchived)
-                }
-                Button("Add time") { presentation.addTime(taskID: presentation.selectedTaskID) }
-                Button("Review time") { presentation.reviewTime() }
+                Button("New task") { newTask() }.disabled(!canCreateTask)
+                Toggle("Show archived", isOn: $presentation.showArchived)
+                TextField("Search full project / task path", text: $presentation.search)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Search full project or task path")
             }
             if model.snapshot?.projects.isEmpty == true {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label("Create your first project", systemImage: "folder").font(.headline)
-                    Text("Use New project above, then create a leaf task. Selection alone never starts tracking.")
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text("Create your first project, then create a leaf task. Selection alone never starts tracking.")
+                    .foregroundStyle(.secondary)
             }
-            GeometryReader { geometry in
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                let totals = Result { try presentation.projectTaskTotals() }
                 VStack(alignment: .leading, spacing: 8) {
                     ScrollViewReader { scroll in
-                        List(selection: $presentation.selectedTaskID) {
-                    if let project = presentation.projects.first(where: { $0.id == presentation.selectedProjectID }) {
-                        Section("Tasks") {
-                            ForEach(presentation.rows(projectID: project.id)) { row in
-                                HStack {
-                                    if !row.isLeaf {
-                                        Button {
-                                            if !presentation.expandedTaskIDs.insert(row.id).inserted {
-                                                presentation.expandedTaskIDs.remove(row.id)
-                                            }
-                                        } label: {
-                                            Image(systemName: presentation.expandedTaskIDs.contains(row.id) || !presentation.search.isEmpty ? "chevron.down" : "chevron.right")
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .accessibilityLabel("Toggle children of \(row.path)")
+                        let outline = presentation.outlineRows()
+                        Table(of: TrackOutlineRow.self, selection: $presentation.selectedRow) {
+                            TableColumn("Title") { row in
+                                Text(row.title + (row.isArchived ? " (archived)" : ""))
+                                    .lineLimit(2).help(row.path).accessibilityLabel(row.path)
+                                    .id(row.id)
+                                    .onAppear {
+                                        mountedRows.insert(row.id)
+                                        reveal(scroll)
                                     }
-                                    Text(row.path).lineLimit(2).help(row.path)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    if !row.isLeaf {
-                                        Text("Parent — not startable").foregroundStyle(.secondary)
-                                    } else {
-                                        Button("Start") { presentation.timer(.start(taskID: row.id)) }
-                                            .disabled(!presentation.eligible(row.id) || model.isBusy)
-                                    }
-                                    Button("Edit") { presentation.editTask(row.id) }
-                                }
-                                .padding(.leading, CGFloat(min(row.depth, 3)) * 16)
-                                .tag(row.id).id(row.id)
-                                .accessibilityElement(children: .contain).accessibilityLabel(row.path)
-                                .contextMenu {
-                                    Button("New subtask") { presentation.newTask(projectID: project.id, parentID: row.id) }.disabled(project.isArchived)
-                                    Button("Add time") { presentation.addTime(taskID: row.id) }.disabled(!row.isLeaf || project.isArchived)
-                                    Button("Reveal path") { presentation.revealTask(row.id) }
+                                    .onDisappear { mountedRows.remove(row.id) }
+                            }
+                            TableColumn("Total time") { row in
+                                switch totals {
+                                case .success(let values):
+                                    Text(ReportFormatting.totalTime(seconds: values[row.id, default: 0]))
+                                        .monospacedDigit()
+                                case .failure:
+                                    Text("Unavailable").foregroundStyle(.secondary)
                                 }
                             }
+                            TableColumn("Actions") { row in
+                                HStack {
+                                    if case .task(let id) = row.id, row.isLeafTask {
+                                        Button("Start") { presentation.timer(.start(taskID: id)) }
+                                            .disabled(row.isArchived || model.isBusy)
+                                            .accessibilityLabel("Start \(row.path)")
+                                    }
+                                    Button("Edit") { edit(row.id) }
+                                        .accessibilityLabel("Edit \(row.path)")
+                                    Button("Report") { report(row) }
+                                        .accessibilityLabel("Report for \(row.path)")
+                                }
+                            }
+                        } rows: {
+                            TrackHierarchyRows(nodes: outline, presentation: presentation)
                         }
-                    }
-                }
-                .focused($listFocused)
-                .onKeyPress(.return) {
-                    guard let id = presentation.selectedTaskID,
-                          presentation.canStartFromList(id, listFocused: listFocused), !model.isBusy else { return .ignored }
-                    presentation.timer(.start(taskID: id)); return .handled
-                }
-                .onChange(of: presentation.reveal?.id, initial: true) { _, _ in reveal(scroll) }
-                .onChange(of: presentation.sheet?.id) { _, new in if new == nil { reveal(scroll) } }
-                    }
-                    .frame(height: max(100, geometry.size.height * 0.45))
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 10) {
-                            TimelineView(.periodic(from: .now, by: 1)) { _ in timerStrip }
-                            budgets
-                            recent
-                            today
-                            undo
+                        .focused($tableFocused)
+                        .onKeyPress(.return) {
+                            guard case .task(let id) = presentation.selectedRow,
+                                  tableFocused, presentation.isVisible(.task(id)),
+                                  presentation.eligible(id), !model.isBusy else { return .ignored }
+                            presentation.timer(.start(taskID: id))
+                            return .handled
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contextMenu(forSelectionType: TrackRowID.self) { selected in
+                            if let id = selected.first { contextActions(id) }
+                        }
+                        .onChange(of: presentation.reveal?.id, initial: true) { _, _ in reveal(scroll) }
+                        .onChange(of: outline) { _, _ in reveal(scroll) }
+                        .onChange(of: presentation.sheet?.id) { _, new in if new == nil { reveal(scroll) } }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if case .failure(let error) = totals {
+                        Text("Total time unavailable: \(String(describing: error))")
+                            .foregroundStyle(.red).textSelection(.enabled)
+                    }
+                    timerStrip
                 }
+            }
+            DisclosureGroup("Budget details") {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        budgets
+                    }
+                }
+                .frame(maxHeight: 180)
             }
         }
         .padding()
+        .toolbar { TrackControlCommands(presentation: presentation) }
+    }
+
+    private var canCreateTask: Bool {
+        guard let row = presentation.selectedRow, presentation.isVisible(row),
+              let id = presentation.selectedProjectID,
+              let project = presentation.projects.first(where: { $0.id == id }) else { return false }
+        return !project.isArchived
+    }
+    private func newTask() {
+        guard canCreateTask, let projectID = presentation.selectedProjectID else { return }
+        presentation.newTask(projectID: projectID, parentID: presentation.selectedTaskID)
+    }
+    private func edit(_ id: TrackRowID) {
+        switch id {
+        case .project(let id): presentation.editProject(id)
+        case .task(let id): presentation.editTask(id)
+        }
+    }
+    private func report(_ row: TrackOutlineRow) {
+        switch row.id {
+        case .project: openReport(row.projectID, nil)
+        case .task(let id): openReport(row.projectID, id)
+        }
+    }
+    @ViewBuilder private func contextActions(_ id: TrackRowID) -> some View {
+        switch id {
+        case .project(let projectID):
+            Button("Edit project") { presentation.editProject(projectID) }
+            Button("Project report") { openReport(projectID, nil) }
+            if presentation.projects.contains(where: { $0.id == projectID && !$0.isArchived }) {
+                Button("New task") { presentation.newTask(projectID: projectID) }
+            }
+        case .task(let taskID):
+            if let task = model.snapshot?.tasks.first(where: { $0.id == taskID }) {
+                Button("Edit task") { presentation.editTask(taskID) }
+                Button("Task report") { openReport(task.projectID, taskID) }
+                Button("New subtask") { presentation.newTask(projectID: task.projectID, parentID: taskID) }
+                    .disabled(!presentation.projects.contains { $0.id == task.projectID && !$0.isArchived })
+                Button("Add time") { presentation.addTime(taskID: taskID) }
+                    .disabled(!presentation.eligible(taskID))
+                Button("Reveal path") { presentation.revealTask(taskID) }
+            }
+        }
     }
     private func reveal(_ scroll: ScrollViewProxy) {
-        guard let request = presentation.consumeReveal() else { return }
-        // Only an explicit reveal moves focus; publications and warnings do not.
-        scroll.scrollTo(request.taskID); listFocused = true
+        guard presentation.destination == .track, presentation.sheet == nil,
+              let request = presentation.reveal,
+              presentation.selectedRow == .task(request.taskID) else { return }
+        let target = TrackRowID.task(request.taskID)
+        scroll.scrollTo(target)
+        guard mountedRows.contains(target) else { return }
+        tableFocused = true
+        presentation.completeReveal(requestID: request.id)
     }
+
     @ViewBuilder private var timerStrip: some View {
         if let active = model.snapshot?.activeTimer,
            let row = model.snapshot?.entries.first(where: { $0.id == active.entryID }) {
@@ -166,17 +211,17 @@ struct TrackView: View {
                         }
                         ForEach(allocations, id: \.taskID) { item in
                             let used = usage[item.taskID] ?? 0
-                            let band = BudgetRules.band(used: used, budget: item.limitSeconds)
-                            let ratio = min(Decimal(1), max(Decimal.zero, used / Decimal(item.limitSeconds)))
-                            let difference = Decimal(item.limitSeconds) - used
+                            let band = BudgetRules.band(used: used, budget: item.limitMinutes)
+                            let ratio = min(Decimal(1), max(Decimal.zero, used / (Decimal(item.limitMinutes) * 60)))
+                            let difference = Decimal(item.limitMinutes) * 60 - used
                             let balance = difference < 0
                                 ? "\(RateInput.text(-difference)) seconds over budget"
                                 : "\(RateInput.text(difference)) seconds remaining"
-                            let exact = "\(RateInput.text(used)) / \(item.limitSeconds) seconds used; \(balance)"
+                            let exact = "\(RateInput.text(used)) / \(Decimal(item.limitMinutes) * 60) seconds used; \(balance)"
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(presentation.path(item.taskID)).font(.headline)
                                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                Text("\(ReportFormatting.budgetHours(seconds: used)) / \(ReportFormatting.budgetHours(seconds: Decimal(item.limitSeconds))) used — \(ReportFormatting.budgetBalance(used: used, budget: item.limitSeconds))")
+                                Text("\(ReportFormatting.budgetHours(seconds: used)) / \(ReportFormatting.budgetHours(seconds: Decimal(item.limitMinutes) * 60)) used — \(ReportFormatting.budgetBalance(used: used, budget: item.limitMinutes))")
                                     .monospacedDigit().help(exact)
                                     .accessibilityLabel("Lifetime usage").accessibilityValue(exact)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -187,11 +232,11 @@ struct TrackView: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 if snapshot.tasks.contains(where: { $0.parentTaskID == item.taskID }) {
-                                    Text(ReportFormatting.budgetAllocation(allocated: item.allocatedSeconds, budget: item.limitSeconds))
+                                    Text(ReportFormatting.budgetAllocation(allocated: item.allocatedMinutes, budget: item.limitMinutes))
                                         .font(.caption).fixedSize(horizontal: false, vertical: true)
-                                        .help("\(RateInput.text(item.allocatedSeconds)) / \(item.limitSeconds) seconds allocated")
+                                        .help("\(RateInput.text(item.allocatedMinutes)) minutes of \(item.limitMinutes) minutes allocated")
                                         .accessibilityLabel("Descendant frontier allocation")
-                                        .accessibilityValue("\(RateInput.text(item.allocatedSeconds)) of \(item.limitSeconds) seconds allocated; \(RateInput.text(Decimal(item.limitSeconds) - item.allocatedSeconds)) seconds unallocated")
+                                        .accessibilityValue("\(RateInput.text(item.allocatedMinutes)) of \(item.limitMinutes) minutes allocated; \(RateInput.text(Decimal(item.limitMinutes) - item.allocatedMinutes)) minutes unallocated")
                                 }
                             }
                         }
@@ -202,38 +247,71 @@ struct TrackView: View {
             }
         }
     }
-    private var recent: some View {
-        let entries = (model.snapshot?.entries ?? []).sorted { $0.startAt > $1.startAt }
-        var seen = Set<UUID>()
-        let ids = entries.compactMap { seen.insert($0.taskID).inserted && presentation.eligible($0.taskID) ? $0.taskID : nil }.prefix(8)
-        return GroupBox("Recent tasks (explicit Start only)") {
-            ForEach(Array(ids), id: \.self) { id in
-                HStack { Button(presentation.path(id)) { presentation.revealTask(id) }.help(presentation.path(id)); Button("Start") { presentation.timer(.start(taskID: id)) }.disabled(model.isBusy) }
+    private var undo: some View {
+        HStack {
+            switch model.migrationUndoAvailability {
+            case .available(let receiptID):
+                Button("Undo first-child migration") { presentation.undoMigration(receiptID: receiptID) }.disabled(model.isBusy)
+            case .unavailable(let reason):
+                Text("Migration Undo unavailable: \(reason)").textSelection(.enabled)
             }
+            Button("Undo time correction") { presentation.undoCorrection() }.disabled(model.isBusy || !model.canUndoCorrection)
+            Button("Undo time review") { presentation.undoTimeReview() }.disabled(model.isBusy || !model.canUndoTimeReview)
         }
     }
-    @ViewBuilder private var today: some View {
-        if let s = model.snapshot {
-            GroupBox("Today — local calendar intersections; editing opens the whole saved entry") {
-                ForEach(TrackPresentation.todayEntries(in: s, now: Date(), calendar: .current)) { row in
-                    HStack {
-                        EntryDisclosure(entry: row, path: presentation.path(row.taskID), zone: .current)
-                        if row.endAt != nil { Button("Edit whole entry") { presentation.editTime(entryID: row.id) } }
-                        else if let stop = presentation.ownedStop { Button("Stop") { presentation.timer(stop) } }
-                        else { Button("Review") { presentation.reviewTime() } }
-                    }
+}
+
+private struct TrackHierarchyRows: TableRowContent {
+    let nodes: [TrackOutlineRow]
+    let presentation: TrackPresentation
+    @TableRowBuilder<TrackOutlineRow> var tableRowBody: some TableRowContent<TrackOutlineRow> {
+        ForEach(nodes) { node in
+            if node.children.isEmpty {
+                TableRow(node)
+            } else {
+                DisclosureTableRow(node, isExpanded: expansion(node.id)) {
+                    TrackHierarchyRows(nodes: node.children, presentation: presentation)
                 }
             }
         }
     }
-    private var undo: some View {
-        HStack {
-            switch model.migrationUndoAvailability {
-            case .available(let receiptID): Button("Undo first-child migration") { presentation.undoMigration(receiptID: receiptID) }.disabled(model.isBusy)
-            case .unavailable(let reason): Text("Migration Undo unavailable: \(reason)").textSelection(.enabled)
+    private func expansion(_ id: TrackRowID) -> Binding<Bool> {
+        Binding {
+            if !presentation.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+            switch id {
+            case .project(let id): return presentation.expandedProjectIDs.contains(id)
+            case .task(let id): return presentation.expandedTaskIDs.contains(id)
             }
-            Button("Undo time correction") { presentation.undoCorrection() }.disabled(model.isBusy || !model.canUndoCorrection)
-            Button("Undo time review") { presentation.undoTimeReview() }.disabled(model.isBusy || !model.canUndoTimeReview)
+        } set: { expanded in
+            guard presentation.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            switch id {
+            case .project(let id):
+                if expanded { presentation.expandedProjectIDs.insert(id) }
+                else { presentation.expandedProjectIDs.remove(id) }
+            case .task(let id):
+                if expanded { presentation.expandedTaskIDs.insert(id) }
+                else { presentation.expandedTaskIDs.remove(id) }
+            }
+        }
+    }
+}
+
+
+struct TrackControlCommands: ToolbarContent {
+    @Bindable var presentation: TrackPresentation
+    var body: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Toggle("Show archived", isOn: $presentation.showArchived)
+            Menu("Time and history") {
+                Button("Undo time correction") { presentation.undoCorrection() }
+                    .disabled(presentation.workspace.isBusy || !presentation.workspace.canUndoCorrection)
+                Button("Undo time review") { presentation.undoTimeReview() }
+                    .disabled(presentation.workspace.isBusy || !presentation.workspace.canUndoTimeReview)
+                if case .available(let receiptID) = presentation.workspace.migrationUndoAvailability {
+                    Button("Undo first-child migration") { presentation.undoMigration(receiptID: receiptID) }
+                        .disabled(presentation.workspace.isBusy)
+                }
+            }
         }
     }
 }

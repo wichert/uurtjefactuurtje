@@ -118,6 +118,8 @@ struct ProjectSheet: View {
             }
         }
         .formStyle(.grouped)
+        .textFieldStyle(.bordered)
+        .textInputBorderShape(.roundedRectangle)
         .frame(minWidth: 360, idealWidth: 480, maxWidth: 560,
                minHeight: 280, idealHeight: 440, maxHeight: 520)
         .disabled(presentation.acceptedWork)
@@ -164,53 +166,61 @@ struct TaskSheet: View {
         if let reviewed = draft.reviewedSnapshot { return !reviewed.editorRelevantEquals(latest) }
         return latest.revision != draft.observedRevision
     }
+    private var location: String {
+        if !draft.isNew { return presentation.path(draft.id) }
+        if let parent = draft.parentID { return presentation.path(parent) }
+        return model.snapshot?.projects.first(where: { $0.id == draft.projectID })?.name ?? "Missing project"
+    }
     var body: some View {
-        Form {
-            Section(draft.isNew ? "New task" : "Edit task") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Name")
-                    TextField("Name", text: $draft.name).labelsHidden().accessibilityLabel("Task name")
-                }
-                if draft.isNew {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Project")
-                        Picker("Project", selection: Binding(get: { draft.projectID }, set: { draft.relocate(projectID: $0, parentID: nil) })) {
-                            ForEach((model.snapshot?.projects ?? []).filter { !$0.isArchived }) { Text($0.name).tag($0.id) }
-                        }.labelsHidden().accessibilityLabel("Project")
-                        Text("Parent")
-                        Picker("Parent", selection: Binding(get: { draft.parentID }, set: { draft.relocate(projectID: draft.projectID, parentID: $0) })) {
-                            Text("Project root").tag(UUID?.none)
-                            ForEach(presentation.allRows(projectID: draft.projectID)) { Text($0.path).tag(Optional($0.id)) }
-                        }.labelsHidden().accessibilityLabel("Parent")
-                        Text(draft.parentID.map { presentation.path($0) } ?? "Project root")
-                            .font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: 0) {
+        ScrollView {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(draft.isNew ? "New task" : "Edit task").font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Location").font(.subheadline).foregroundStyle(.secondary)
+                Text(location).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Name")
+                TextField("Task name", text: $draft.name)
+                    .labelsHidden().accessibilityLabel("Task name")
+            }
+            Toggle("Lifetime budget (optional)", isOn: $draft.budgetEnabled)
+            if draft.budgetEnabled {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Budget (hours)")
+                    HStack {
+                        TextField("For example \(BudgetInput.text(150))", text: $draft.budgetHours)
+                            .labelsHidden().accessibilityLabel("Lifetime budget in hours")
+                            .frame(maxWidth: 200)
+                        Button {
+                            draft.stepBudget(by: -30)
+                            sync()
+                        } label: { Image(systemName: "minus") }
+                        .accessibilityLabel("Decrease budget by 30 minutes")
+                        .help("Decrease by 0.5 hours (30 minutes)")
+                        .disabled(draft.budgetAfterStep(by: -30) == nil)
+                        Button {
+                            draft.stepBudget(by: 30)
+                            sync()
+                        } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Increase budget by 30 minutes")
+                        .help("Increase by 0.5 hours (30 minutes)")
+                        .disabled(draft.budgetAfterStep(by: 30) == nil)
                     }
-                    Text("New tasks start without a budget. Edit the created task to set one.")
-                        .font(.callout).fixedSize(horizontal: false, vertical: true)
-                    if needsMigration {
-                        Text("This leaf owns saved entries or pending sleep. Move all of them to an ordinary Generic child; pending sleep stays unbilled.")
-                            .fixedSize(horizontal: false, vertical: true)
-                        Toggle(isOn: $draft.migrationAccepted) {
-                            Text("I confirm migration of entries and pending sleep")
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                } else {
-                    Text(presentation.path(draft.id)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                    Toggle("Lifetime budget", isOn: $draft.budgetEnabled)
-                    if draft.budgetEnabled {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Hours")
-                            TextField("Hours", text: $draft.budgetHours)
-                                .labelsHidden().accessibilityLabel("Lifetime budget in hours")
-                                .frame(maxWidth: 200, alignment: .leading)
-                        }
-                    }
+                    constraints
                 }
             }
-            Section("Budget constraints") { constraints }
+            if draft.isNew && needsMigration {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Move this parent's saved entries and pending sleep to an ordinary Generic child. Pending sleep stays unbilled.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Toggle("I confirm migration of entries and pending sleep", isOn: $draft.migrationAccepted)
+                }
+            }
             if libraryChanged {
-                Section("Review required") {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Library changed. Review fields, location and budget constraints before resubmitting.")
                         .fixedSize(horizontal: false, vertical: true)
                     Button("I reviewed the latest task and constraints") {
@@ -222,25 +232,32 @@ struct TaskSheet: View {
                     }
                 }
             }
-            Section {
-                if let error {
-                    Text(error).foregroundStyle(.red).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                }
-                HStack {
-                    Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
-                    Spacer()
-                    Button(draft.isNew ? "Create" : "Save") { save(start: false) }.keyboardShortcut(.defaultAction)
-                    if draft.isNew { Button("Create & Start") { save(start: true) } }
-                }
+            if let error {
+                Text(error).foregroundStyle(.red).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .formStyle(.grouped)
-        .frame(minWidth: 360, idealWidth: 480, maxWidth: 560,
-               minHeight: 280, idealHeight: 440, maxHeight: 520)
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        }
+        Divider()
+        HStack {
+            Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
+            Spacer()
+            Button(draft.isNew ? "Create" : "Save") { save(start: false) }.keyboardShortcut(.defaultAction)
+            if draft.isNew { Button("Create & Start") { save(start: true) } }
+        }
+        .padding(20)
+        }
+        .textFieldStyle(.bordered)
+        .textInputBorderShape(.roundedRectangle)
+        .frame(minWidth: 400, idealWidth: 480, maxWidth: 560)
+        .frame(minHeight: 280, idealHeight: 440, maxHeight: 560)
         .disabled(presentation.acceptedWork)
         .onChange(of: draft.name) { _, _ in sync() }
         .onChange(of: draft.budgetHours) { _, _ in sync() }
         .onChange(of: draft.budgetEnabled) { _, _ in sync() }
+        .onChange(of: draft.migrationAccepted) { _, _ in sync() }
         .onChange(of: draft.projectID) { _, _ in sync() }
         .onChange(of: draft.parentID) { _, _ in sync() }
     }
@@ -251,28 +268,31 @@ struct TaskSheet: View {
     }
     @ViewBuilder private var constraints: some View {
         if let s = model.snapshot {
-            switch Result(catching: { try BudgetRules.allowance(in: s, projectID: draft.projectID, parentTaskID: draft.parentID, editingTaskID: draft.isNew ? nil : draft.id) }) {
+            switch Result(catching: {
+                try BudgetRules.allowance(in: s, projectID: draft.projectID,
+                    parentTaskID: draft.parentID, editingTaskID: draft.isNew ? nil : draft.id)
+            }) {
             case .success(let allowance):
-                Text("Descendant frontier minimum: \(allowance.minimumSeconds.description) seconds")
-                Text("Maximum: \(allowance.maximumSeconds?.description ?? "unbounded") seconds")
+                let minimum = ReportFormatting.budgetHours(seconds: allowance.minimumMinutes * 60)
+                let maximum = allowance.maximumMinutes.map { ReportFormatting.budgetHours(seconds: $0 * 60) }
+                Text("Range: \(minimum)–\(maximum ?? "unlimited"). Whole minutes; lifetime budget.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let id = allowance.limitingAncestorID {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Limiting budget")
-                        Button { sync(); presentation.editConstrainingBudget(taskID: id) } label: {
-                            Text(presentation.path(id)).multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }.accessibilityLabel("Edit limiting budget: \(presentation.path(id))")
+                    Button {
+                        sync()
+                        presentation.editConstrainingBudget(taskID: id)
+                    } label: {
+                        Text("Edit limiting budget: \(presentation.path(id))")
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .buttonStyle(.link)
+                    .accessibilityLabel("Edit limiting budget: \(presentation.path(id))")
                 }
-            case .failure(let error): Text(String(describing: error)).textSelection(.enabled)
-            }
-            switch Result(catching: { try BudgetRules.allocations(in: s) }) {
-            case .success(let allocations):
-                ForEach(allocations.filter { $0.taskID == draft.id || $0.taskID == draft.parentID }, id: \.taskID) { item in
-                    Text("\(presentation.path(item.taskID)): allocated \(item.allocatedSeconds.description) / \(item.limitSeconds) seconds")
-                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                }
-            case .failure(let error): Text(String(describing: error)).textSelection(.enabled)
+            case .failure(let error):
+                Text(String(describing: error)).foregroundStyle(.red).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -281,7 +301,6 @@ struct TaskSheet: View {
         guard let latest = model.snapshot, !libraryChanged else { error = "Review the changed library first."; return }
         if let message = draft.inputError(in: latest) { error = message; return }
         guard !needsMigration || draft.migrationAccepted else { error = "Confirm entry and pending-sleep migration."; return }
-        guard draft.isNew || !draft.budgetEnabled || draft.parsedBudget != nil else { error = "Enter positive budget hours that represent a whole number of seconds."; return }
         sync()
         guard presentation.begin(token) else { return }
         if draft.isNew {
@@ -296,7 +315,7 @@ struct TaskSheet: View {
                 } catch { self.error = String(describing: error); presentation.complete(token, error: error) }
             }
         } else {
-            let result = model.enqueueSubmit(.editTask(id: draft.id, name: draft.name, budgetSeconds: draft.parsedBudget),
+            let result = model.enqueueSubmit(.editTask(id: draft.id, name: draft.name, budgetMinutes: draft.parsedBudget),
                                              expectedRevision: draft.observedRevision, reviewedSnapshot: draft.reviewedSnapshot)
             Task { @MainActor in
                 do {
