@@ -53,6 +53,9 @@ private final class NativeQuitWriteProbe: @unchecked Sendable {
             #expect(!WorkspaceMenu.recentTasks(host.track).contains(root))
             host.track.cancelSheet()
             host.submitTimer(.start(taskID: leaf)); await host.drain()
+            #expect(WorkspaceMenu.stopTitle(host.track) == "Stop Project / Parent / Leaf")
+            #expect(WorkspaceMenu.recentTasks(host.track).isEmpty)
+            host.submitTimer(.stop(expectedEntryID: t.workspace.snapshot?.activeTimer?.entryID)); await host.drain()
             #expect(WorkspaceMenu.recentTasks(host.track) == [leaf])
 
             let clock = NativeClock()
