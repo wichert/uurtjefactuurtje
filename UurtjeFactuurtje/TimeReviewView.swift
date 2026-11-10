@@ -22,64 +22,72 @@ struct TimeReviewView: View {
         switch model.timerStatus { case .paused, .reviewRequired: model.snapshot?.activeTimer != nil; default: false }
     }
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Review unconfirmed time").font(.headline)
                 Text("Pending sleep is not billed. Resolving an interruption stays stopped.")
                 Text("Time zone captured when opened: \(zone.identifier)")
-                if command == nil {
-                    Picker("Review item", selection: $selectedPending) {
-                        if interrupted { Text("Interrupted active entry").tag(UUID?.none) }
-                        ForEach(pending) { row in
-                            Text("\(presentation.path(row.taskID)) — \(EntryDisclosure.bound(row.sleepAt, zone: zone))").tag(Optional(row.id))
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if command == nil {
+                        Picker("Review item", selection: $selectedPending) {
+                            if interrupted { Text("Interrupted active entry").tag(UUID?.none) }
+                            ForEach(pending) { row in
+                                Text("\(presentation.path(row.taskID)) — \(EntryDisclosure.bound(row.sleepAt, zone: zone))").tag(Optional(row.id))
+                            }
                         }
-                    }
-                    if let row = pending.first(where: { $0.id == selectedPending }) {
-                        Text(presentation.path(row.taskID)).textSelection(.enabled)
-                        Text("Sleep: \(EntryDisclosure.bound(row.sleepAt, zone: zone))")
-                        Text(row.wakeAt.map { "Saved wake: \(EntryDisclosure.bound($0, zone: zone))" }
-                             ?? "End unknown — enter an explicit end; nothing is inferred from now.")
-                        if row.wakeAt == nil { endFields }
-                        HStack {
-                            Button("Review Include") { plan(skip: false) }
-                            Button("Review Skip", role: .destructive) { plan(skip: true) }
+                        if let row = pending.first(where: { $0.id == selectedPending }) {
+                            Text(presentation.path(row.taskID)).textSelection(.enabled)
+                            Text("Sleep: \(EntryDisclosure.bound(row.sleepAt, zone: zone))")
+                            Text(row.wakeAt.map { "Saved wake: \(EntryDisclosure.bound($0, zone: zone))" }
+                                 ?? "End unknown — enter an explicit end; nothing is inferred from now.")
+                            if row.wakeAt == nil { endFields }
+                            HStack {
+                                Button("Review Include") { plan(skip: false) }
+                                Button("Review Skip", role: .destructive) { plan(skip: true) }
+                            }
+                        } else if interrupted, let active = model.snapshot?.activeTimer,
+                                  let entry = model.snapshot?.entries.first(where: { $0.id == active.entryID }) {
+                            EntryDisclosure(entry: entry, path: presentation.path(entry.taskID), zone: zone)
+                            Text("Durable checkpoint: \(EntryDisclosure.bound(active.checkpointAt, zone: zone))")
+                            Text("Checkpointed duration: \(EntryDisclosure.durationText(active.checkpointAt - entry.startAt))")
+                            Text("Explicit discard removes this interrupted entry and all its checkpointed time; nothing is saved and tracking stays stopped.")
+                            endFields
+                            HStack {
+                                Button("Review Save & Stop") { plan(skip: false) }
+                                Button("Review explicit discard", role: .destructive) { plan(skip: true) }
+                            }
+                        } else {
+                            Text("No selected review item. Choose a pending interval, or there is nothing to resolve.")
                         }
-                    } else if interrupted, let active = model.snapshot?.activeTimer,
-                              let entry = model.snapshot?.entries.first(where: { $0.id == active.entryID }) {
-                        EntryDisclosure(entry: entry, path: presentation.path(entry.taskID), zone: zone)
-                        Text("Durable checkpoint: \(EntryDisclosure.bound(active.checkpointAt, zone: zone))")
-                        Text("Checkpointed duration: \(EntryDisclosure.durationText(active.checkpointAt - entry.startAt))")
-                        Text("Explicit discard removes this interrupted entry and all its checkpointed time; nothing is saved and tracking stays stopped.")
-                        endFields
-                        HStack {
-                            Button("Review Save & Stop") { plan(skip: false) }
-                            Button("Review explicit discard", role: .destructive) { plan(skip: true) }
-                        }
+                        Text("Native input can normalize dates or retain the previous value for an incomplete edit. Review the resulting values before confirming.")
                     } else {
-                        Text("No selected review item. Choose a pending interval, or there is nothing to resolve.")
+                        Text("Review the resulting dates, times, occurrence offsets and affected entries. Confirm accepts these values, including any native date normalization. Use Back to change them.")
                     }
-                    Text("Native input can normalize dates or retain the previous value for an incomplete edit. Review the resulting values before confirming.")
-                } else {
-                    Text("Review the resulting dates, times, occurrence offsets and affected entries. Confirm accepts these values, including any native date normalization. Use Back to change them.")
+                    Text("Minute-level display. Unchanged saved boundaries retain exact stored precision; newly entered ends use minute precision.")
+                    if let summary { Text(summary).textSelection(.enabled) }
+                    if let inclusion { AdjustmentDisclosure(preview: inclusion, zone: zone) }
+                    if stale { Text("Evidence changed or a submission failed. Use Back and Review again; old disclosure is retained.") }
+                    if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
                 }
-                Text("Minute-level display. Unchanged saved boundaries retain exact stored precision; newly entered ends use minute precision.")
-                if let summary { Text(summary).textSelection(.enabled) }
-                if let inclusion { AdjustmentDisclosure(preview: inclusion, zone: zone) }
-                if stale { Text("Evidence changed or a submission failed. Use Back and Review again; old disclosure is retained.") }
-                if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-                HStack {
-                    Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
-                    if command != nil {
-                        Button("Back") { command = nil; inclusion = nil; summary = nil; stale = false }
-                        if inclusion?.runningConflict != nil, let stop = presentation.ownedStop {
-                            Button("Stop, then review again") { presentation.timer(stop) { stale = true } }
-                        }
-                        Button("Confirm reviewed action") { confirm() }
-                            .disabled(stale || inclusion?.runningConflict != nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack {
+                Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
+                if command != nil {
+                    Button("Back") { command = nil; inclusion = nil; summary = nil; stale = false }
+                    if inclusion?.runningConflict != nil, let stop = presentation.ownedStop {
+                        Button("Stop, then review again") { presentation.timer(stop) { stale = true } }
                     }
+                    Button("Confirm reviewed action") { confirm() }
+                        .disabled(stale || inclusion?.runningConflict != nil)
                 }
-            }.disabled(presentation.acceptedWork)
-        }.padding().frame(minWidth: 580, idealHeight: 650)
+            }
+        }
+        .disabled(presentation.acceptedWork)
+        .padding().frame(minWidth: 580, idealHeight: 650)
         .onAppear { selectedPending = interrupted ? nil : pending.first?.id; resetEnd() }
         .onChange(of: selectedPending) { _, _ in command = nil; inclusion = nil; summary = nil; resetEnd() }
         .onChange(of: end) { _, _ in if command != nil { stale = true } }

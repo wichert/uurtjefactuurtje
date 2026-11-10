@@ -49,11 +49,41 @@ private final class NativeQuitWriteProbe: @unchecked Sendable {
             host.newProject(); host.addTime(); host.openReview(); host.revealNotificationTask(leaf)
             #expect(host.track.routeToken == token); #expect(host.track.sheet != nil)
             #expect(host.track.feedback != nil)
-            #expect(WorkspaceMenu.tasks(host.track, query: "Parent") == [leaf])
-            #expect(!WorkspaceMenu.tasks(host.track, query: "").contains(root))
+            #expect(WorkspaceMenu.matchingTasks(host.track, query: "Parent") == [leaf])
+            #expect(!WorkspaceMenu.recentTasks(host.track).contains(root))
             host.track.cancelSheet()
             host.submitTimer(.start(taskID: leaf)); await host.drain()
-            #expect(WorkspaceMenu.tasks(host.track, query: "") == [leaf])
+            #expect(WorkspaceMenu.recentTasks(host.track) == [leaf])
+
+            let clock = NativeClock()
+            // Sibling temp directory, not a subdirectory of the open library: the store
+            // treats unknown artifacts inside its directory as unsafe on reopen.
+            let recentDirectory = fixtureTemporaryDirectory().appendingPathComponent(UUID().uuidString, isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: recentDirectory) }
+            let suite = "MenuRecentTests.\(UUID())"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let model = WorkspaceModel(directory: recentDirectory)
+            model.configureTimer(clock: { clock.read() })
+            let recentTrack = TrackPresentation(workspace: model, defaults: defaults)
+            try await model.open()
+            let projectID = try await project(recentTrack)
+            let older = try await task(recentTrack, project: projectID, name: "Older")
+            let newer = try await task(recentTrack, project: projectID, name: "Newer")
+            let parent = try await task(recentTrack, project: projectID, name: "Parent")
+            let child = try await task(recentTrack, project: projectID, parent: parent, name: "Child")
+            for id in [older, newer, child] {
+                _ = try await model.enqueueTimer(.start(taskID: id)).value
+                clock.set(clock.read() + 1)
+                _ = try await model.enqueueTimer(.stop(expectedEntryID: model.snapshot?.activeTimer?.entryID)).value
+            }
+            #expect(WorkspaceMenu.recentTasks(recentTrack) == [child, newer])
+            #expect(WorkspaceMenu.recentTasks(recentTrack, limit: 3) == [child, newer, older])
+            #expect(!WorkspaceMenu.recentTasks(recentTrack, limit: 3).contains(parent))
+            #expect(WorkspaceMenu.matchingTasks(recentTrack, query: "Project / Parent / Child") == [child])
+            #expect(WorkspaceMenu.matchingTasks(recentTrack, query: "Parent") == [child])
+            #expect(WorkspaceMenu.matchingTasks(recentTrack, query: "").isEmpty)
+            await model.close()
             await t.workspace.close()
             host.revealNotificationTask(leaf)
             host.reopen(); await host.drain()

@@ -130,7 +130,11 @@ final class NativeClock: @unchecked Sendable {
             host.installSceneActions(workspace: { opens += 1 }, settings: {})
             host.track.selectedProjectID = p
             host.track.selectedTaskID = id
-            #expect(WorkspaceMenu.tasks(host.track, query: "Project / Task") == [id])
+            #expect(WorkspaceMenu.matchingTasks(host.track, query: "Project / Task") == [id])
+            host.revealNotificationTask(id)
+            #expect(host.track.selectedTaskID == id)
+            #expect(host.workspace.snapshot == before)
+            #expect(host.workspace.snapshot?.activeTimer == nil)
             host.newProject()
             guard case .project(let draft) = host.track.sheet else {
                 Issue.record("Missing routed project draft"); return
@@ -155,7 +159,7 @@ final class NativeClock: @unchecked Sendable {
             guard case .timeReview = host.track.sheet else {
                 Issue.record("Missing routed time review"); return
             }
-            #expect(opens == 4)
+            #expect(opens == 5)
             #expect(host.track.workspace === host.workspace)
             #expect(host.workspace === t.workspace)
             #expect(t.workspace.snapshot == before)

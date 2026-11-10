@@ -400,6 +400,16 @@ import Testing
         #expect(try SleepPlanner.interruption(endAt: 90, in: interrupted).requestedEnd == 90)
         #expect(try SleepPlanner.interruption(endAt: nil, in: interrupted).correction == nil)
     }
+    @Test func pinnedReviewLayoutPreservesEvidenceAndActionSemantics() throws {
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("UurtjeFactuurtje/TimeReviewView.swift"), encoding: .utf8)
+        #expect(source.range(of: "var body: some View {\\s*VStack", options: .regularExpression) != nil)
+        #expect(source.range(of: #"\}\s*\.frame\(maxWidth: \.infinity, maxHeight: \.infinity\)\s*HStack \{\s*Button\("Cancel""#, options: .regularExpression) != nil)
+        #expect(source.range(of: #"Button\("Confirm reviewed action"\) \{ confirm\(\) \}\s*\.disabled\(stale"#, options: .regularExpression) != nil)
+        #expect(source.contains("static func saveAndStop"))
+        #expect(source.contains("static func interruptionSummary"))
+    }
 }
 
 @Suite @MainActor struct EditorBaselineTests {
