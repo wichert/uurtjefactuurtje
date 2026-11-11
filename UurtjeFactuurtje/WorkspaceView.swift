@@ -29,7 +29,10 @@ struct WorkspaceView<ReportsContent: View>: View {
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Workspace unavailable").font(.headline)
-                    Text("Use the library feedback above. Tracking and reports will return when the library is available.")
+                    Text("""
+                        Use the library feedback above. Tracking and reports will return \
+                        when the library is available.
+                        """)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
@@ -37,7 +40,12 @@ struct WorkspaceView<ReportsContent: View>: View {
                 .padding()
             }
         }
-        .sheet(item: Binding(get: { presentation.sheet }, set: { if $0 == nil { presentation.cancelSheet() } })) { route in
+        .sheet(
+            item: Binding(
+                get: { presentation.sheet },
+                set: { if $0 == nil { presentation.cancelSheet() } },
+            )
+        ) { route in
             editor(route, token: presentation.routeToken)
                 .id(presentation.routeToken)
                 .interactiveDismissDisabled(presentation.acceptedWork)
@@ -87,7 +95,10 @@ struct WorkspaceRecovery: View {
                 Text(host.recoveryMessage)
                     .fixedSize(horizontal: false, vertical: true)
                 if host.workspace.snapshot != nil && !host.available {
-                    Text("Any retained rows are the last confirmed view and may be stale, not proof that the last change was saved.")
+                    Text("""
+                        Any retained rows are the last confirmed view and may be stale, \
+                        not proof that the last change was saved.
+                        """)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if host.canReopen {

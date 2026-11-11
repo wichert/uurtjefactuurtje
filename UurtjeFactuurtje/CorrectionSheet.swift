@@ -64,7 +64,8 @@ struct EntryDisclosure: View {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.timeZone = zone
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return "\(formatter.string(from: date)) — \(zone.identifier), \(offset(zone.secondsFromGMT(for: date)))"
+        return "\(formatter.string(from: date)) — \(zone.identifier), "
+            + offset(zone.secondsFromGMT(for: date))
     }
 
     static func durationText(_ duration: Int64) -> String {
@@ -83,7 +84,8 @@ struct EntryDisclosure: View {
             if let stop = entry.endAt {
                 Text("Duration: \(Self.durationText(stop - entry.startAt))")
             }
-            Text("Minute-level display. Saved boundaries retain their exact stored precision unless explicitly changed.")
+            Text("Minute-level display. Saved boundaries retain their exact stored precision "
+                 + "unless explicitly changed.")
                 .font(.caption)
         }.textSelection(.enabled)
     }
@@ -93,20 +95,29 @@ struct AdjustmentDisclosure: View {
     let zone: TimeZone
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let source = preview.source { EntryDisclosure(entry: source, path: "Source: " + (preview.sourcePath?.text ?? "Unavailable"), zone: zone) }
+            if let source = preview.source {
+                EntryDisclosure(entry: source,
+                                path: "Source: " + (preview.sourcePath?.text ?? "Unavailable"), zone: zone)
+            }
             switch preview.draft {
             case .add(let id, let task, let start, let end), .edit(let id, let task, let start, let end):
-                EntryDisclosure(entry: TimeEntry(id: id, taskID: task, startAt: start, endAt: end), path: "Destination: " + preview.targetPath.text, zone: zone)
+                EntryDisclosure(entry: TimeEntry(id: id, taskID: task, startAt: start, endAt: end),
+                                path: "Destination: " + preview.targetPath.text, zone: zone)
             }
             ForEach(preview.adjustments, id: \.before.id) { adjustment in
                 GroupBox(adjustment.kind.rawValue) {
                     EntryDisclosure(entry: adjustment.before, path: adjustment.path.text, zone: zone)
                     if adjustment.retained.isEmpty { Text("Entire row will be deleted.") }
-                    ForEach(adjustment.retained) { EntryDisclosure(entry: $0, path: "Retained (including split identity)", zone: zone) }
+                    ForEach(adjustment.retained) {
+                        EntryDisclosure(entry: $0,
+                                        path: "Retained (including split identity)", zone: zone)
+                    }
                 }
             }
             if let conflict = preview.runningConflict {
-                EntryDisclosure(entry: conflict, path: "Running conflict: " + (preview.runningPath?.text ?? "Unavailable"), zone: zone)
+                EntryDisclosure(entry: conflict,
+                                path: "Running conflict: " + (preview.runningPath?.text ?? "Unavailable"),
+                                zone: zone)
                 Text("Stop the owned timer, then Review again. Stopping does not confirm this preview.")
             }
         }
@@ -121,13 +132,15 @@ struct CorrectionSheet: View {
     private var model: WorkspaceModel { presentation.workspace }
     var body: some View {
         ScrollView {
-            if let form { contents(form) }
-            else { Text(error ?? "Loading entry…").textSelection(.enabled) }
+            if let form { contents(form) } else {
+                Text(error ?? "Loading entry…").textSelection(.enabled)
+            }
         }.padding().frame(minWidth: 580, idealHeight: 650)
         .task(id: token) {
-            guard form == nil, let s = model.snapshot else { return }
-            do { form = try CorrectionForm(route: route, snapshot: s, now: Date()) }
-            catch { self.error = String(describing: error) }
+            guard form == nil, let snapshot = model.snapshot else { return }
+            do { form = try CorrectionForm(route: route, snapshot: snapshot, now: Date()) } catch {
+                self.error = String(describing: error)
+            }
         }
         .onChange(of: model.snapshot?.revision) { _, _ in form?.invalidateConfirmation() }
     }
@@ -148,10 +161,14 @@ struct CorrectionSheet: View {
                 }
                 WallTimeFields(title: "Start", value: $form.start, calendar: form.calendar)
                 WallTimeFields(title: "End", value: $form.end, calendar: form.calendar)
-                Text("Unchanged saved boundaries retain exact stored precision. Changing a boundary uses minute precision.")
-                Text("Native input can normalize dates or retain the previous value for an incomplete edit. Review the resulting values before confirming.")
+                Text("Unchanged saved boundaries retain exact stored precision. "
+                     + "Changing a boundary uses minute precision.")
+                Text("Native input can normalize dates or retain the previous value for an incomplete edit. "
+                     + "Review the resulting values before confirming.")
             } else {
-                Text("Review the resulting dates, times, occurrence offsets and affected entries. Confirm accepts these values, including any native date normalization. Use Back to change them.")
+                Text("Review the resulting dates, times, occurrence offsets and affected entries. "
+                     + "Confirm accepts these values, including any native date normalization. "
+                     + "Use Back to change them.")
             }
             if let preview = form.preview { AdjustmentDisclosure(preview: preview, zone: form.timeZone) }
             if let deletion = form.deletion {
@@ -159,10 +176,16 @@ struct CorrectionSheet: View {
                     path: "Delete whole entry: " + deletion.path.text, zone: form.timeZone)
             }
             if form.confirmationIsStale {
-                Text("Preview is stale. The old disclosure is retained; use Back and Review again before confirming.")
+                Text("Preview is stale. The old disclosure is retained; use Back and Review again before "
+                     + "confirming.")
             }
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-            HStack {
+            actions(form, editing: editing)
+        }.disabled(presentation.acceptedWork)
+    }
+
+    @ViewBuilder private func actions(_ form: CorrectionForm, editing: Bool) -> some View {
+        HStack {
                 Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
                 if editing {
                     Button("Review") { review(form, deletion: false) }
@@ -180,12 +203,15 @@ struct CorrectionSheet: View {
                            role: form.deletion == nil ? nil : .destructive) { confirm(form) }
                         .disabled(form.confirmationIsStale || form.preview?.runningConflict != nil)
                 }
-            }
-        }.disabled(presentation.acceptedWork)
+        }
     }
+
     private func allowed(_ task: TaskRecord, form: CorrectionForm) -> Bool {
-        guard let s = model.snapshot, !s.tasks.contains(where: { $0.parentTaskID == task.id }) else { return false }
-        if let source = form.source { return s.tasks.first(where: { $0.id == source.taskID })?.projectID == task.projectID }
+        guard let snapshot = model.snapshot,
+              !snapshot.tasks.contains(where: { $0.parentTaskID == task.id }) else { return false }
+        if let source = form.source {
+            return snapshot.tasks.first(where: { $0.id == source.taskID })?.projectID == task.projectID
+        }
         return presentation.eligible(task.id)
     }
     private func review(_ form: CorrectionForm, deletion: Bool) {
@@ -194,10 +220,9 @@ struct CorrectionSheet: View {
             return
         }
         DispatchQueue.main.async {
-            guard !presentation.acceptedWork, let s = model.snapshot else { return }
+            guard !presentation.acceptedWork, let snapshot = model.snapshot else { return }
             do {
-                if deletion { try form.reviewDeletion(in: s) }
-                else { try form.review(in: s) }
+                if deletion { try form.reviewDeletion(in: snapshot) } else { try form.review(in: snapshot) }
                 error = nil
             } catch {
                 self.error = String(describing: error)
@@ -208,14 +233,16 @@ struct CorrectionSheet: View {
     private func confirm(_ form: CorrectionForm) {
         guard !form.confirmationIsStale else { return }
         let command: CorrectionCommand
-        if let deletion = form.deletion { command = .delete(deletion) }
-        else if let preview = form.preview, preview.runningConflict == nil { command = .apply(preview) }
-        else { return }
+        if let deletion = form.deletion { command = .delete(deletion) } else if let preview = form.preview,
+            preview.runningConflict == nil { command = .apply(preview) } else { return }
         guard presentation.begin(token) else { return }
         let result = model.enqueueCorrection(command)
         Task { @MainActor in
-            do { _ = try await result.value; presentation.complete(token) }
-            catch { self.error = String(describing: error); form.invalidateConfirmation(); presentation.complete(token, error: error) }
+            do { _ = try await result.value; presentation.complete(token) } catch {
+                self.error = String(describing: error)
+                form.invalidateConfirmation()
+                presentation.complete(token, error: error)
+            }
         }
     }
 }

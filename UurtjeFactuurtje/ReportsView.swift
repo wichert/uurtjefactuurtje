@@ -38,7 +38,13 @@ private struct ReportRefreshKey: Equatable {
                     Text("Week").tag(ReportMode.week)
                     Text("Project").tag(ReportMode.project)
                 }.pickerStyle(.segmented)
-                Toggle("Include archived projects", isOn: Binding(get: { reports.includeArchived }, set: { reports.includeArchived = $0 }))
+                Toggle(
+                    "Include archived projects",
+                    isOn: Binding(
+                        get: { reports.includeArchived },
+                        set: { reports.includeArchived = $0 },
+                    )
+                )
                 if let error = reports.error {
                     Text(error).foregroundStyle(.red).accessibilityLabel("Report error: \(error)")
                 }

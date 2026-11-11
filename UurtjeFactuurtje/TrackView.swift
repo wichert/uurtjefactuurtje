@@ -8,8 +8,6 @@ struct TrackView: View {
     @State private var mountedRows: Set<TrackRowID> = []
     private var model: WorkspaceModel { presentation.workspace }
 
-
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let count = model.snapshot?.pendingSleepIntervals.count, count > 0 {
@@ -192,73 +190,10 @@ struct TrackView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
-    @ViewBuilder private var budgets: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
-            if let snapshot = model.snapshot {
-                switch Result(catching: {
-                    (try model.budgetUsage(), try BudgetRules.allocations(in: snapshot))
-                }) {
-                case .success(let projection):
-                    let usage = projection.0
-                    let allocations = projection.1.filter { item in
-                        snapshot.tasks.contains { $0.id == item.taskID && $0.projectID == presentation.selectedProjectID }
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        if !allocations.isEmpty {
-                            Text("Lifetime use includes descendants; open use is provisional when safe, otherwise checkpoint-bounded. Pending sleep is excluded. Allocation reserves budgets, not time used.")
-                                .font(.caption).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        ForEach(allocations, id: \.taskID) { item in
-                            let used = usage[item.taskID] ?? 0
-                            let band = BudgetRules.band(used: used, budget: item.limitMinutes)
-                            let ratio = min(Decimal(1), max(Decimal.zero, used / (Decimal(item.limitMinutes) * 60)))
-                            let difference = Decimal(item.limitMinutes) * 60 - used
-                            let balance = difference < 0
-                                ? "\(RateInput.text(-difference)) seconds over budget"
-                                : "\(RateInput.text(difference)) seconds remaining"
-                            let exact = "\(RateInput.text(used)) / \(Decimal(item.limitMinutes) * 60) seconds used; \(balance)"
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(presentation.path(item.taskID)).font(.headline)
-                                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                Text("\(ReportFormatting.budgetHours(seconds: used)) / \(ReportFormatting.budgetHours(seconds: Decimal(item.limitMinutes) * 60)) used — \(ReportFormatting.budgetBalance(used: used, budget: item.limitMinutes))")
-                                    .monospacedDigit().help(exact)
-                                    .accessibilityLabel("Lifetime usage").accessibilityValue(exact)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                ProgressView(value: NSDecimalNumber(decimal: ratio).doubleValue)
-                                    .accessibilityLabel("Lifetime budget progress").accessibilityValue(exact)
-                                if band != .none {
-                                    Text(band == .hundred ? "100% reached — tracking may continue" : "80% reached — tracking may continue")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                if snapshot.tasks.contains(where: { $0.parentTaskID == item.taskID }) {
-                                    Text(ReportFormatting.budgetAllocation(allocated: item.allocatedMinutes, budget: item.limitMinutes))
-                                        .font(.caption).fixedSize(horizontal: false, vertical: true)
-                                        .help("\(RateInput.text(item.allocatedMinutes)) minutes of \(item.limitMinutes) minutes allocated")
-                                        .accessibilityLabel("Descendant frontier allocation")
-                                        .accessibilityValue("\(RateInput.text(item.allocatedMinutes)) of \(item.limitMinutes) minutes allocated; \(RateInput.text(Decimal(item.limitMinutes) - item.allocatedMinutes)) minutes unallocated")
-                                }
-                            }
-                        }
-                    }
-                case .failure(let error):
-                    Text("Budget projection failed: \(String(describing: error))").textSelection(.enabled)
-                }
-            }
-        }
+    private var budgets: some View {
+        BudgetRowsView(presentation: presentation)
     }
-    private var undo: some View {
-        HStack {
-            switch model.migrationUndoAvailability {
-            case .available(let receiptID):
-                Button("Undo first-child migration") { presentation.undoMigration(receiptID: receiptID) }.disabled(model.isBusy)
-            case .unavailable(let reason):
-                Text("Migration Undo unavailable: \(reason)").textSelection(.enabled)
-            }
-            Button("Undo time correction") { presentation.undoCorrection() }.disabled(model.isBusy || !model.canUndoCorrection)
-            Button("Undo time review") { presentation.undoTimeReview() }.disabled(model.isBusy || !model.canUndoTimeReview)
-        }
-    }
+
 }
 
 private struct TrackHierarchyRows: TableRowContent {
@@ -286,16 +221,21 @@ private struct TrackHierarchyRows: TableRowContent {
             guard presentation.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             switch id {
             case .project(let id):
-                if expanded { presentation.expandedProjectIDs.insert(id) }
-                else { presentation.expandedProjectIDs.remove(id) }
+                if expanded {
+                    presentation.expandedProjectIDs.insert(id)
+                } else {
+                    presentation.expandedProjectIDs.remove(id)
+                }
             case .task(let id):
-                if expanded { presentation.expandedTaskIDs.insert(id) }
-                else { presentation.expandedTaskIDs.remove(id) }
+                if expanded {
+                    presentation.expandedTaskIDs.insert(id)
+                } else {
+                    presentation.expandedTaskIDs.remove(id)
+                }
             }
         }
     }
 }
-
 
 struct TrackControlCommands: ToolbarContent {
     @Bindable var presentation: TrackPresentation
@@ -313,5 +253,126 @@ struct TrackControlCommands: ToolbarContent {
                 }
             }
         }
+    }
+}
+
+private struct BudgetRowsView: View {
+    @Bindable var presentation: TrackPresentation
+    private var model: WorkspaceModel { presentation.workspace }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            if let snapshot = model.snapshot {
+                switch Result(catching: {
+                    (try model.budgetUsage(), try BudgetRules.allocations(in: snapshot))
+                }) {
+                case let .success(projection):
+                    success(projection, snapshot: snapshot)
+                case let .failure(error):
+                    Text("Budget projection failed: \(String(describing: error))")
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func success(
+        _ projection: ([UUID: Decimal], [BudgetAllocation]),
+        snapshot: LibrarySnapshot,
+    ) -> some View {
+        let usage = projection.0
+        let allocations = projection.1.filter { item in
+            snapshot.tasks.contains {
+                $0.id == item.taskID && $0.projectID == presentation.selectedProjectID
+            }
+        }
+        VStack(alignment: .leading, spacing: 8) {
+            if !allocations.isEmpty {
+                Text("""
+                    Lifetime use includes descendants; open use is provisional when safe, otherwise \
+                    checkpoint-bounded. Pending sleep is excluded. Allocation reserves budgets, not time used.
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(allocations, id: \.taskID) { item in
+                BudgetRowView(
+                    presentation: presentation,
+                    item: item,
+                    used: usage[item.taskID] ?? 0,
+                    hasChildren: snapshot.tasks.contains { $0.parentTaskID == item.taskID },
+                )
+            }
+        }
+    }
+}
+
+private struct BudgetRowView: View {
+    @Bindable var presentation: TrackPresentation
+    let item: BudgetAllocation
+    let used: Decimal
+    let hasChildren: Bool
+
+    var body: some View {
+        let band = BudgetRules.band(used: used, budget: item.limitMinutes)
+        let limitSeconds = Decimal(item.limitMinutes) * 60
+        let ratio = min(Decimal(1), max(.zero, used / limitSeconds))
+        let difference = limitSeconds - used
+        let balance = difference < 0
+            ? "\(RateInput.text(-difference)) seconds over budget"
+            : "\(RateInput.text(difference)) seconds remaining"
+        let exact = "\(RateInput.text(used)) / \(limitSeconds) seconds used; \(balance)"
+        VStack(alignment: .leading, spacing: 4) {
+            Text(presentation.path(item.taskID))
+                .font(.headline)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(summary)
+                .monospacedDigit()
+                .help(exact)
+                .accessibilityLabel("Lifetime usage")
+                .accessibilityValue(exact)
+                .fixedSize(horizontal: false, vertical: true)
+            ProgressView(value: NSDecimalNumber(decimal: ratio).doubleValue)
+                .accessibilityLabel("Lifetime budget progress")
+                .accessibilityValue(exact)
+            if band != .none {
+                Text(band == .hundred
+                    ? "100% reached — tracking may continue"
+                    : "80% reached — tracking may continue")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if hasChildren {
+                allocationHelp
+            }
+        }
+    }
+
+    private var summary: String {
+        let limitSeconds = Decimal(item.limitMinutes) * 60
+        let usedHours = ReportFormatting.budgetHours(seconds: used)
+        let limitHours = ReportFormatting.budgetHours(seconds: limitSeconds)
+        let balance = ReportFormatting.budgetBalance(used: used, budget: item.limitMinutes)
+        return "\(usedHours) / \(limitHours) used — \(balance)"
+    }
+
+    private var allocationHelp: some View {
+        let allocated = ReportFormatting.budgetAllocation(
+            allocated: item.allocatedMinutes,
+            budget: item.limitMinutes,
+        )
+        let allocatedText = RateInput.text(item.allocatedMinutes)
+        let unallocated = RateInput.text(Decimal(item.limitMinutes) - item.allocatedMinutes)
+        return Text(allocated)
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+            .help("\(allocatedText) minutes of \(item.limitMinutes) minutes allocated")
+            .accessibilityLabel("Descendant frontier allocation")
+            .accessibilityValue(
+                "\(allocatedText) of \(item.limitMinutes) minutes allocated; \(unallocated) minutes unallocated"
+            )
     }
 }

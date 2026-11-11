@@ -30,7 +30,10 @@ struct SettingsView: View {
                     LabeledContent("Week starts on", value: "Unavailable")
                         .accessibilityLabel("Week starts on, unavailable")
                 }
-                Text("Applies to weekly reports and each project's This week period. Dates and times use your Mac's time zone.")
+                Text("""
+                    Applies to weekly reports and each project's This week period. \
+                    Dates and times use your Mac's time zone.
+                    """)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 if isSaving {
@@ -50,7 +53,10 @@ struct SettingsView: View {
                 Text("Hourly rates and currencies belong to each project. Reports do not convert between currencies.")
             }
             Section("Warnings") {
-                Text("In-app budget warnings work without notification permission. Manage macOS notifications and Focus in System Settings; those settings can silence external notifications.")
+                Text("""
+                    In-app budget warnings work without notification permission. Manage macOS notifications \
+                    and Focus in System Settings; those settings can silence external notifications.
+                    """)
             }
         }
         .formStyle(.grouped)
@@ -66,12 +72,18 @@ struct SettingsView: View {
         saveError = nil
         Task { @MainActor in
             defer { isSaving = false }
-            do { try await accepted.value }
-            catch {
+            do {
+                try await accepted.value
+            } catch {
                 if model.availability == .blocked {
-                    saveError = "The save could not be confirmed. Reopen the library from the main window before trying again."
+                    saveError = """
+                        The save could not be confirmed. Reopen the library from the main window before trying again.
+                        """
                 } else {
-                    saveError = "The preference was not saved. Your previous selection is unchanged. Check the library's location and try again."
+                    saveError = """
+                        The preference was not saved. Your previous selection is unchanged. \
+                        Check the library's location and try again.
+                        """
                 }
             }
         }

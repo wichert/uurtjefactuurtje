@@ -35,7 +35,8 @@ import LibraryStore
         let entries = (track.workspace.snapshot?.entries ?? []).sorted { $0.startAt > $1.startAt }
         var result: [UUID] = []
         for entry in entries {
-            guard entry.taskID != active, track.eligible(entry.taskID), seen.insert(entry.taskID).inserted else { continue }
+            guard entry.taskID != active, track.eligible(entry.taskID),
+                  seen.insert(entry.taskID).inserted else { continue }
             result.append(entry.taskID)
             if result.count == limit { break }
         }

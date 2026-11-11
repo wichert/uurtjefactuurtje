@@ -34,6 +34,25 @@
 		A00000000000000000000019 /* LibraryStore in Frameworks */ = {isa = PBXBuildFile; productRef = C00000000000000000000001 /* LibraryStore */; };
 		A0000000000000000000001A /* LibraryStore in Frameworks */ = {isa = PBXBuildFile; productRef = C00000000000000000000002 /* LibraryStore */; };
 		A0000000000000000000001B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001D /* Assets.xcassets */; };
+		A0000000000000000000001F /* RecoveryMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001E /* RecoveryMessage.swift */; };
+		A00000000000000000000020 /* EditorModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000020 /* EditorModels.swift */; };
+		A00000000000000000000021 /* TrackTotals.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000021 /* TrackTotals.swift */; };
+		A00000000000000000000022 /* EditorBaselineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000022 /* EditorBaselineTests.swift */; };
+		A00000000000000000000023 /* EditorBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000023 /* EditorBudgetTests.swift */; };
+		A00000000000000000000024 /* EditorContextualTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000024 /* EditorContextualTests.swift */; };
+		A00000000000000000000025 /* EditorDSTTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000025 /* EditorDSTTests.swift */; };
+		A00000000000000000000026 /* EditorInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000026 /* EditorInputTests.swift */; };
+		A00000000000000000000027 /* EditorReviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000027 /* EditorReviewTests.swift */; };
+		A00000000000000000000028 /* MenuBarRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000028 /* MenuBarRoutingTests.swift */; };
+		A00000000000000000000029 /* NativeHostLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000029 /* NativeHostLifecycleTests.swift */; };
+		A0000000000000000000002A /* NativeHostQuitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000002A /* NativeHostQuitTests.swift */; };
+		A0000000000000000000002B /* NativeHostRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000002B /* NativeHostRecoveryTests.swift */; };
+		A0000000000000000000002C /* NativeHostRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000002C /* NativeHostRoutingTests.swift */; };
+		A0000000000000000000002D /* NativeHostSleepTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000002D /* NativeHostSleepTests.swift */; };
+		A0000000000000000000002E /* ReportsScopedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000002E /* ReportsScopedTests.swift */; };
+		A0000000000000000000002F /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000002F /* TestSupport.swift */; };
+		A00000000000000000000030 /* TrackOutlineSlice3Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000030 /* TrackOutlineSlice3Tests.swift */; };
+		A00000000000000000000031 /* TrackOutlineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000031 /* TrackOutlineTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -76,6 +95,25 @@
 		B0000000000000000000001B /* UurtjeFactuurtje.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UurtjeFactuurtje.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B0000000000000000000001C /* UurtjeFactuurtjeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = UurtjeFactuurtjeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B0000000000000000000001D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B0000000000000000000001E /* RecoveryMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryMessage.swift; sourceTree = "<group>"; };
+		B00000000000000000000020 /* EditorModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorModels.swift; sourceTree = "<group>"; };
+		B00000000000000000000021 /* TrackTotals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackTotals.swift; sourceTree = "<group>"; };
+		B00000000000000000000022 /* EditorBaselineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorBaselineTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000023 /* EditorBudgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorBudgetTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000024 /* EditorContextualTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorContextualTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000025 /* EditorDSTTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDSTTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000026 /* EditorInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorInputTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000027 /* EditorReviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorReviewTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000028 /* MenuBarRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarRoutingTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000029 /* NativeHostLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHostLifecycleTests.swift; sourceTree = "<group>"; };
+		B0000000000000000000002A /* NativeHostQuitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHostQuitTests.swift; sourceTree = "<group>"; };
+		B0000000000000000000002B /* NativeHostRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHostRecoveryTests.swift; sourceTree = "<group>"; };
+		B0000000000000000000002C /* NativeHostRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHostRoutingTests.swift; sourceTree = "<group>"; };
+		B0000000000000000000002D /* NativeHostSleepTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHostSleepTests.swift; sourceTree = "<group>"; };
+		B0000000000000000000002E /* ReportsScopedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsScopedTests.swift; sourceTree = "<group>"; };
+		B0000000000000000000002F /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
+		B00000000000000000000030 /* TrackOutlineSlice3Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackOutlineSlice3Tests.swift; sourceTree = "<group>"; };
+		B00000000000000000000031 /* TrackOutlineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackOutlineTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -129,9 +167,12 @@
 				B00000000000000000000011 /* WeeklyReportView.swift */,
 				B00000000000000000000012 /* ProjectReportView.swift */,
 				B00000000000000000000013 /* ReportFormatting.swift */,
+				B00000000000000000000020 /* EditorModels.swift */,
+				B00000000000000000000021 /* TrackTotals.swift */,
 				B00000000000000000000019 /* Info.plist */,
 				B0000000000000000000001A /* UurtjeFactuurtje.entitlements */,
 				B0000000000000000000001D /* Assets.xcassets */,
+				B0000000000000000000001E /* RecoveryMessage.swift */,
 			);
 			path = UurtjeFactuurtje;
 			sourceTree = "<group>";
@@ -144,6 +185,22 @@
 				B00000000000000000000016 /* ReportsPresentationTests.swift */,
 				B00000000000000000000017 /* NativeHostTests.swift */,
 				B00000000000000000000018 /* MenuBarStatusTests.swift */,
+				B00000000000000000000022 /* EditorBaselineTests.swift */,
+				B00000000000000000000023 /* EditorBudgetTests.swift */,
+				B00000000000000000000024 /* EditorContextualTests.swift */,
+				B00000000000000000000025 /* EditorDSTTests.swift */,
+				B00000000000000000000026 /* EditorInputTests.swift */,
+				B00000000000000000000027 /* EditorReviewTests.swift */,
+				B00000000000000000000028 /* MenuBarRoutingTests.swift */,
+				B00000000000000000000029 /* NativeHostLifecycleTests.swift */,
+				B0000000000000000000002A /* NativeHostQuitTests.swift */,
+				B0000000000000000000002B /* NativeHostRecoveryTests.swift */,
+				B0000000000000000000002C /* NativeHostRoutingTests.swift */,
+				B0000000000000000000002D /* NativeHostSleepTests.swift */,
+				B0000000000000000000002E /* ReportsScopedTests.swift */,
+				B0000000000000000000002F /* TestSupport.swift */,
+				B00000000000000000000030 /* TrackOutlineSlice3Tests.swift */,
+				B00000000000000000000031 /* TrackOutlineTests.swift */,
 			);
 			path = UurtjeFactuurtjeTests;
 			sourceTree = "<group>";
@@ -275,6 +332,9 @@
 				A00000000000000000000011 /* WeeklyReportView.swift in Sources */,
 				A00000000000000000000012 /* ProjectReportView.swift in Sources */,
 				A00000000000000000000013 /* ReportFormatting.swift in Sources */,
+				A0000000000000000000001F /* RecoveryMessage.swift in Sources */,
+				A00000000000000000000020 /* EditorModels.swift in Sources */,
+				A00000000000000000000021 /* TrackTotals.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -287,6 +347,22 @@
 				A00000000000000000000016 /* ReportsPresentationTests.swift in Sources */,
 				A00000000000000000000017 /* NativeHostTests.swift in Sources */,
 				A00000000000000000000018 /* MenuBarStatusTests.swift in Sources */,
+				A00000000000000000000022 /* EditorBaselineTests.swift in Sources */,
+				A00000000000000000000023 /* EditorBudgetTests.swift in Sources */,
+				A00000000000000000000024 /* EditorContextualTests.swift in Sources */,
+				A00000000000000000000025 /* EditorDSTTests.swift in Sources */,
+				A00000000000000000000026 /* EditorInputTests.swift in Sources */,
+				A00000000000000000000027 /* EditorReviewTests.swift in Sources */,
+				A00000000000000000000028 /* MenuBarRoutingTests.swift in Sources */,
+				A00000000000000000000029 /* NativeHostLifecycleTests.swift in Sources */,
+				A0000000000000000000002A /* NativeHostQuitTests.swift in Sources */,
+				A0000000000000000000002B /* NativeHostRecoveryTests.swift in Sources */,
+				A0000000000000000000002C /* NativeHostRoutingTests.swift in Sources */,
+				A0000000000000000000002D /* NativeHostSleepTests.swift in Sources */,
+				A0000000000000000000002E /* ReportsScopedTests.swift in Sources */,
+				A0000000000000000000002F /* TestSupport.swift in Sources */,
+				A00000000000000000000030 /* TrackOutlineSlice3Tests.swift in Sources */,
+				A00000000000000000000031 /* TrackOutlineTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -12,17 +12,21 @@ import LibraryStore
     private(set) var preview: CorrectionPreview?
     private(set) var deletion: DeletionPreview?
     private(set) var confirmationIsStale = false
-    var calendar: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = timeZone; return c }
+    var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar
+    }
     init(route: CorrectionRoute, snapshot: LibrarySnapshot, now: Date,
          timeZone: TimeZone = .current) throws {
         self.timeZone = timeZone
-        var c = Calendar(identifier: .gregorian)
-        c.timeZone = timeZone
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
         switch route.mode {
         case .add(let task):
             entryID = UUID(); source = nil; taskID = task
-            start = Self.fields(now.addingTimeInterval(-3600), calendar: c)
-            end = Self.fields(now, calendar: c)
+            start = Self.fields(now.addingTimeInterval(-3600), calendar: calendar)
+            end = Self.fields(now, calendar: calendar)
         case .edit(let id):
             guard let entry = snapshot.entries.first(where: { $0.id == id }),
                   let stop = entry.endAt else {
@@ -30,9 +34,9 @@ import LibraryStore
             }
             entryID = entry.id; source = entry; taskID = entry.taskID
             start = Self.fields(Date(timeIntervalSince1970: TimeInterval(entry.startAt)),
-                                calendar: c, preservingPrecision: true)
+                                calendar: calendar, preservingPrecision: true)
             end = Self.fields(Date(timeIntervalSince1970: TimeInterval(stop)),
-                              calendar: c, preservingPrecision: true)
+                              calendar: calendar, preservingPrecision: true)
         }
     }
 
@@ -74,7 +78,8 @@ import LibraryStore
         changed.components.second = 0
         changed.selectedInstant = nil
         if instant != nil,
-           case .ambiguous(let earlier, let later, _, _) = CorrectionClock.resolve(changed.components, calendar: calendar) {
+           case .ambiguous(let earlier, let later, _, _) = CorrectionClock.resolve(
+               changed.components, calendar: calendar) {
             changed.selectedInstant = earlierChoice ? earlier : later
         }
         return changed
@@ -90,15 +95,17 @@ import LibraryStore
         return LocalCorrectionTime(components: changed)
     }
     func duration() throws -> Int64 {
-        try EntryInterval(startAt: start.resolve(calendar: calendar), endAt: end.resolve(calendar: calendar)).durationSeconds
+        try EntryInterval(startAt: start.resolve(calendar: calendar),
+                          endAt: end.resolve(calendar: calendar)).durationSeconds
     }
     func review(in snapshot: LibrarySnapshot) throws {
         guard let taskID else { throw EditorError.invalid("Select a task.") }
-        let lo = try start.resolve(calendar: calendar), hi = try end.resolve(calendar: calendar)
-        _ = try EntryInterval(startAt: lo, endAt: hi)
+        let startAt = try start.resolve(calendar: calendar)
+        let endAt = try end.resolve(calendar: calendar)
+        _ = try EntryInterval(startAt: startAt, endAt: endAt)
         let draft: CorrectionDraft = source == nil
-            ? .add(id: entryID, taskID: taskID, startAt: lo, endAt: hi)
-            : .edit(id: entryID, taskID: taskID, startAt: lo, endAt: hi)
+            ? .add(id: entryID, taskID: taskID, startAt: startAt, endAt: endAt)
+            : .edit(id: entryID, taskID: taskID, startAt: startAt, endAt: endAt)
         preview = try CorrectionPlanner.preview(draft, in: snapshot)
         deletion = nil; confirmationIsStale = false
     }

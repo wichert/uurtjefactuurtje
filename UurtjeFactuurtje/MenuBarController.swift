@@ -32,8 +32,12 @@ struct MenuBarStatus: Equatable {
                   let seconds = try? model.timerElapsedSeconds(), seconds >= 0 else {
                 return state("Tracking paused — clock or timer needs review", "exclamationmark.clock")
             }
-            return MenuBarStatus(title: elapsed(seconds), systemImage: "MenuIcon",
-                                 accessibilityLabel: "Tracking \(host.track.path(entry.taskID)), \(elapsed(seconds)) elapsed" + pendingDescription)
+            let label = "Tracking \(host.track.path(entry.taskID)), \(elapsed(seconds)) elapsed"
+            return MenuBarStatus(
+                title: elapsed(seconds),
+                systemImage: "MenuIcon",
+                accessibilityLabel: label + pendingDescription,
+            )
         }
     }
     static func elapsed(_ seconds: Int64) -> String {
@@ -77,7 +81,9 @@ struct MenuBarStatus: Equatable {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             self.item = item
             item.menu = menu
-            displayTimer = Lifecycle.scheduler(every: Self.displayInterval) { [weak self] in self?.refresh(at: Date()) }
+            displayTimer = Lifecycle.scheduler(every: Self.displayInterval) { [weak self] in
+                self?.refresh(at: Date())
+            }
         }
         refresh(at: Date())
     }
@@ -122,7 +128,8 @@ struct MenuBarStatus: Equatable {
     func rebuildMenuIfChanged() {
         let next = WorkspaceMenuProjection(
             stopTitle: WorkspaceMenu.stopTitle(host.track),
-            startIDs: WorkspaceMenu.recentTasks(host.track) + WorkspaceMenu.matchingTasks(host.track, query: searchField.stringValue),
+            startIDs: WorkspaceMenu.recentTasks(host.track)
+                + WorkspaceMenu.matchingTasks(host.track, query: searchField.stringValue),
             enabled: host.acceptingMutations
         )
         guard next != projection else { return }
@@ -132,32 +139,15 @@ struct MenuBarStatus: Equatable {
     func rebuildMenu() {
         let track = host.track
         let enabled = host.acceptingMutations
-        let startIDs = WorkspaceMenu.recentTasks(track) + WorkspaceMenu.matchingTasks(track, query: searchField.stringValue)
-        projection = WorkspaceMenuProjection(stopTitle: WorkspaceMenu.stopTitle(track), startIDs: startIDs, enabled: enabled)
-        var leading: [NSMenuItem] = []
-        if let stopTitle = WorkspaceMenu.stopTitle(track) {
-            let stopItem = NSMenuItem(title: stopTitle, action: #selector(stopTimer(_:)), keyEquivalent: "")
-            stopItem.target = self
-            stopItem.isEnabled = enabled
-            leading.append(stopItem)
-        }
-        for id in WorkspaceMenu.recentTasks(track) {
-            leading.append(makeStartItem(taskID: id, enabled: enabled))
-        }
-
-        var trailing: [NSMenuItem] = []
-        for id in WorkspaceMenu.matchingTasks(track, query: searchField.stringValue) {
-            trailing.append(makeStartItem(taskID: id, enabled: enabled))
-        }
-        trailing.append(.separator())
-        let openItem = NSMenuItem(title: "Open main window", action: #selector(openMainWindow(_:)), keyEquivalent: "")
-        openItem.target = self
-        openItem.isEnabled = true
-        trailing.append(openItem)
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp(_:)), keyEquivalent: "")
-        quitItem.target = self
-        quitItem.isEnabled = true
-        trailing.append(quitItem)
+        let startIDs = WorkspaceMenu.recentTasks(track)
+            + WorkspaceMenu.matchingTasks(track, query: searchField.stringValue)
+        projection = WorkspaceMenuProjection(
+            stopTitle: WorkspaceMenu.stopTitle(track),
+            startIDs: startIDs,
+            enabled: enabled,
+        )
+        let leading = buildLeadingItems(track: track, enabled: enabled)
+        let trailing = buildTrailingItems(track: track, enabled: enabled)
 
         if let searchIndex = menu.items.firstIndex(of: searchMenuItem) {
             for index in stride(from: searchIndex - 1, through: 0, by: -1) {
@@ -183,6 +173,39 @@ struct MenuBarStatus: Equatable {
                 menu.addItem(item)
             }
         }
+    }
+
+    private func buildLeadingItems(track: TrackPresentation, enabled: Bool) -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
+        if let stopTitle = WorkspaceMenu.stopTitle(track) {
+            let item = makeItem(title: stopTitle, action: #selector(stopTimer(_:)), enabled: enabled)
+            items.append(item)
+        }
+        for id in WorkspaceMenu.recentTasks(track) {
+            items.append(makeStartItem(taskID: id, enabled: enabled))
+        }
+        return items
+    }
+
+    private func buildTrailingItems(track: TrackPresentation, enabled: Bool) -> [NSMenuItem] {
+        var items = WorkspaceMenu.matchingTasks(track, query: searchField.stringValue).map {
+            makeStartItem(taskID: $0, enabled: enabled)
+        }
+        items.append(.separator())
+        items.append(makeItem(
+            title: "Open main window",
+            action: #selector(openMainWindow(_:)),
+            enabled: true,
+        ))
+        items.append(makeItem(title: "Quit", action: #selector(quitApp(_:)), enabled: true))
+        return items
+    }
+
+    private func makeItem(title: String, action: Selector, enabled: Bool) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.isEnabled = enabled
+        return item
     }
 
     private func makeStartItem(taskID: UUID, enabled: Bool) -> NSMenuItem {

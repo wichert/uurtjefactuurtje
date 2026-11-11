@@ -13,9 +13,12 @@ enum RateInput {
         let separator = locale.decimalSeparator ?? "."
         let parts = raw.components(separatedBy: separator)
         guard parts.count <= 2, !parts.isEmpty,
-              parts.allSatisfy({ !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) } }) else { return nil }
+              parts.allSatisfy({ !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) } }) else {
+            return nil
+        }
         let canonical = parts.joined(separator: ".")
-        guard let decimal = Decimal(string: canonical, locale: Locale(identifier: "en_US_POSIX")), !decimal.isNaN else { return nil }
+        guard let decimal = Decimal(string: canonical, locale: Locale(identifier: "en_US_POSIX")),
+              !decimal.isNaN else { return nil }
         func normalized(_ input: String) -> String {
             let pieces = input.components(separatedBy: ".")
             let integer = String(pieces[0].drop(while: { $0 == "0" }))
@@ -23,7 +26,8 @@ enum RateInput {
             return (integer.isEmpty ? "0" : integer) + (fraction.isEmpty ? "" : "." + fraction)
         }
         // Foundation may round Decimal(string:); exact round-trip equality is mandatory for money.
-        guard normalized(canonical) == normalized(self.text(decimal, locale: Locale(identifier: "en_US_POSIX"))) else { return nil }
+        let rendered = normalized(Self.text(decimal, locale: Locale(identifier: "en_US_POSIX")))
+        guard normalized(canonical) == rendered else { return nil }
         return decimal
     }
 }
@@ -53,10 +57,12 @@ struct ProjectSheet: View {
                     TextField("Hourly rate", text: $draft.rateText)
                         .labelsHidden().accessibilityLabel("Hourly rate")
                         .frame(maxWidth: 200, alignment: .leading)
-                    Text("Enter a nonnegative decimal using your Mac's decimal separator; no grouping separators.")
+                    Text("Enter a nonnegative decimal using your Mac's decimal separator; "
+                         + "no grouping separators.")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     if !draft.isNew {
-                        Text("Changing the hourly rate recalculates all saved time in this project at the new rate, including historical reports. It does not preserve past rates.")
+                        Text("Changing the hourly rate recalculates all saved time in this project at the new rate, "
+                             + "including historical reports. It does not preserve past rates.")
                             .font(.callout).fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -65,10 +71,12 @@ struct ProjectSheet: View {
                     TextField("ISO currency code", text: $draft.currencyCode)
                         .labelsHidden().accessibilityLabel("ISO currency code")
                         .frame(maxWidth: 100, alignment: .leading)
-                    Text("Use an uppercase ISO code, for example EUR or USD. No currency conversion is performed.")
+                    Text("Use an uppercase ISO code, for example EUR or USD. "
+                         + "No currency conversion is performed.")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                if let original = model.snapshot?.projects.first(where: { $0.id == draft.id }), original.currencyCode != draft.currencyCode {
+                if let original = model.snapshot?.projects.first(where: { $0.id == draft.id }),
+                   original.currencyCode != draft.currencyCode {
                     Toggle(isOn: Binding(
                         get: { draft.confirmedPreviousCurrency == original.currencyCode },
                         set: { draft.confirmedPreviousCurrency = $0 ? original.currencyCode : nil })) {
@@ -92,15 +100,19 @@ struct ProjectSheet: View {
             if !draft.isNew, let project = model.snapshot?.projects.first(where: { $0.id == draft.id }) {
                 Section("Availability") {
                     Toggle(isOn: $draft.archiveConfirmed) {
-                        Text(project.isArchived ? "Confirm restoring this project" : "Confirm archive; history is retained")
+                        Text(project.isArchived ? "Confirm restoring this project"
+                                                : "Confirm archive; history is retained")
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Button(project.isArchived ? "Restore project" : "Archive project") { save(archive: !project.isArchived) }
+                    Button(project.isArchived ? "Restore project" : "Archive project") {
+                        save(archive: !project.isArchived)
+                    }
                         .disabled(!draft.archiveConfirmed)
                     if let active = model.snapshot?.activeTimer,
                        let entry = model.snapshot?.entries.first(where: { $0.id == active.entryID }),
                        model.snapshot?.tasks.first(where: { $0.id == entry.taskID })?.projectID == draft.id {
-                        Text("Stop or review this project's timer before archiving. Archive is never silently combined with Stop.")
+                        Text("Stop or review this project's timer before archiving. "
+                             + "Archive is never silently combined with Stop.")
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -214,7 +226,8 @@ struct TaskSheet: View {
             }
             if draft.isNew && needsMigration {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Move this parent's saved entries and pending sleep to an ordinary Generic child. Pending sleep stays unbilled.")
+                    Text("Move this parent's saved entries and pending sleep to an ordinary Generic child. "
+                         + "Pending sleep stays unbilled.")
                         .fixedSize(horizontal: false, vertical: true)
                     Toggle("I confirm migration of entries and pending sleep", isOn: $draft.migrationAccepted)
                 }
@@ -262,14 +275,15 @@ struct TaskSheet: View {
         .onChange(of: draft.parentID) { _, _ in sync() }
     }
     private var needsMigration: Bool {
-        guard let s = model.snapshot, let parent = draft.parentID,
-              !s.tasks.contains(where: { $0.parentTaskID == parent }) else { return false }
-        return s.entries.contains { $0.taskID == parent } || s.pendingSleepIntervals.contains { $0.taskID == parent }
+        guard let snapshot = model.snapshot, let parent = draft.parentID,
+              !snapshot.tasks.contains(where: { $0.parentTaskID == parent }) else { return false }
+        return snapshot.entries.contains { $0.taskID == parent }
+            || snapshot.pendingSleepIntervals.contains { $0.taskID == parent }
     }
     @ViewBuilder private var constraints: some View {
-        if let s = model.snapshot {
+        if let snapshot = model.snapshot {
             switch Result(catching: {
-                try BudgetRules.allowance(in: s, projectID: draft.projectID,
+                try BudgetRules.allowance(in: snapshot, projectID: draft.projectID,
                     parentTaskID: draft.parentID, editingTaskID: draft.isNew ? nil : draft.id)
             }) {
             case .success(let allowance):
@@ -300,23 +314,31 @@ struct TaskSheet: View {
     private func save(start: Bool) {
         guard let latest = model.snapshot, !libraryChanged else { error = "Review the changed library first."; return }
         if let message = draft.inputError(in: latest) { error = message; return }
-        guard !needsMigration || draft.migrationAccepted else { error = "Confirm entry and pending-sleep migration."; return }
+        guard !needsMigration || draft.migrationAccepted else {
+            error = "Confirm entry and pending-sleep migration."
+            return
+        }
         sync()
         guard presentation.begin(token) else { return }
         if draft.isNew {
-            let result = model.enqueueTaskCreation(draft.request(start: start), expectedRevision: draft.observedRevision,
-                                                   reviewedSnapshot: draft.reviewedSnapshot)
+            let result = model.enqueueTaskCreation(
+                draft.request(start: start), expectedRevision: draft.observedRevision,
+                reviewedSnapshot: draft.reviewedSnapshot)
             Task { @MainActor in
                 do {
                     let creation = try await result.value
                     guard token == presentation.routeToken else { return }
-                    presentation.feedback = creation.genericID.map { "Created Generic \($0): moved \(creation.movedEntryCount) entries and \(creation.movedPendingCount) pending intervals." } ?? "Task created."
+                    presentation.feedback = creation.genericID.map {
+                        "Created Generic \($0): moved \(creation.movedEntryCount) entries and "
+                            + "\(creation.movedPendingCount) pending intervals."
+                    } ?? "Task created."
                     presentation.complete(token)
                 } catch { self.error = String(describing: error); presentation.complete(token, error: error) }
             }
         } else {
-            let result = model.enqueueSubmit(.editTask(id: draft.id, name: draft.name, budgetMinutes: draft.parsedBudget),
-                                             expectedRevision: draft.observedRevision, reviewedSnapshot: draft.reviewedSnapshot)
+            let result = model.enqueueSubmit(
+                .editTask(id: draft.id, name: draft.name, budgetMinutes: draft.parsedBudget),
+                expectedRevision: draft.observedRevision, reviewedSnapshot: draft.reviewedSnapshot)
             Task { @MainActor in
                 do {
                     _ = try await result.value

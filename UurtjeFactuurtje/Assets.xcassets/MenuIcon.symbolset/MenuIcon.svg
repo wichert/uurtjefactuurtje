@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--Generator: Apple Native CoreSVG 341-->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3300 2200">
+<!--glyph: "MenuIcon", point size: 100.0, template writer version: "138.0.0"-->
+<g id="Guides">
+<line id="Baseline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="696" y2="696"/>
+<line id="Capline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="625.5409999999999" y2="625.5409999999999"/>
+<line id="Baseline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1126" y2="1126"/>
+<line id="Capline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1055.541" y2="1055.541"/>
+<line id="Baseline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1556" y2="1556"/>
+<line id="Capline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1485.541" y2="1485.541"/>
+<line id="left-margin-Ultralight-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="515.611" x2="515.611" y1="600.785" y2="720.121"/>
+<line id="right-margin-Ultralight-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="613.211" x2="613.211" y1="600.785" y2="720.121"/>
+<line id="left-margin-Regular-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="1403.59" x2="1403.59" y1="600.785" y2="720.121"/>
+<line id="right-margin-Regular-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="1501.1899999999998" x2="1501.1899999999998" y1="600.785" y2="720.121"/>
+<line id="left-margin-Black-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="2884.6" x2="2884.6" y1="600.785" y2="720.121"/>
+<line id="right-margin-Black-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="2982.2" x2="2982.2" y1="600.785" y2="720.121"/>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" id="Black-S" transform="matrix(0.125 0 0 0.125 2884.6 696)"><path fill-rule="evenodd" d="M208 148h116v116H208zm392 0h116v116H600zM128 236h164v84h136v-84h136v84h332a96 96 0 0 1 96 96v472a96 96 0 0 1-96 96H128a96 96 0 0 1-96-96V416a96 96 0 0 1 96-96Zm-20 180v472a20 20 0 0 0 20 20h768a20 20 0 0 0 20-20V416Z" fill="black" />
+  <path fill-rule="evenodd" d="M512 404a272 272 0 1 0 0 544 272 272 0 0 0 0-544Zm0 78a194 194 0 1 1 0 388 194 194 0 0 1 0-388Z" fill="black" />
+  <path d="M512 676V542m0 134 102 59" fill="black" stroke="black" stroke-width="58" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M483 650V542a29 29 0 0 1 58 0v108Z" fill="black" stroke="black" />
+  <path d="m512 647 102 59a29 29 0 0 1-29 50l-102-59Z" fill="black" stroke="black" />
+  <circle cx="512" cy="676" r="38" fill="black" />
+</g>
+<g xmlns="http://www.w3.org/2000/svg" id="Regular-S" transform="matrix(0.125 0 0 0.125 1403.59 696)"><path fill-rule="evenodd" d="M208 148h116v116H208zm392 0h116v116H600zM128 236h164v84h136v-84h136v84h332a96 96 0 0 1 96 96v472a96 96 0 0 1-96 96H128a96 96 0 0 1-96-96V416a96 96 0 0 1 96-96Zm-20 180v472a20 20 0 0 0 20 20h768a20 20 0 0 0 20-20V416Z" fill="black" />
+  <path fill-rule="evenodd" d="M512 404a272 272 0 1 0 0 544 272 272 0 0 0 0-544Zm0 78a194 194 0 1 1 0 388 194 194 0 0 1 0-388Z" fill="black" />
+  <path d="M512 676V542m0 134 102 59" fill="black" stroke="black" stroke-width="58" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M483 650V542a29 29 0 0 1 58 0v108Z" fill="black" stroke="black" />
+  <path d="m512 647 102 59a29 29 0 0 1-29 50l-102-59Z" fill="black" stroke="black" />
+  <circle cx="512" cy="676" r="38" fill="black" />
+</g>
+<g xmlns="http://www.w3.org/2000/svg" id="Ultralight-S" transform="matrix(0.125 0 0 0.125 515.611 696)"><path fill-rule="evenodd" d="M208 148h116v116H208zm392 0h116v116H600zM128 236h164v84h136v-84h136v84h332a96 96 0 0 1 96 96v472a96 96 0 0 1-96 96H128a96 96 0 0 1-96-96V416a96 96 0 0 1 96-96Zm-20 180v472a20 20 0 0 0 20 20h768a20 20 0 0 0 20-20V416Z" fill="black" />
+  <path fill-rule="evenodd" d="M512 404a272 272 0 1 0 0 544 272 272 0 0 0 0-544Zm0 78a194 194 0 1 1 0 388 194 194 0 0 1 0-388Z" fill="black" />
+  <path d="M512 676V542m0 134 102 59" fill="black" stroke="black" stroke-width="58" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M483 650V542a29 29 0 0 1 58 0v108Z" fill="black" stroke="black" />
+  <path d="m512 647 102 59a29 29 0 0 1-29 50l-102-59Z" fill="black" stroke="black" />
+  <circle cx="512" cy="676" r="38" fill="black" />
+</g>
+<g xmlns="http://www.w3.org/2000/svg" id="Regular-M" transform="matrix(0.125 0 0 0.125 1403.59 1126)"><path fill-rule="evenodd" d="M208 148h116v116H208zm392 0h116v116H600zM128 236h164v84h136v-84h136v84h332a96 96 0 0 1 96 96v472a96 96 0 0 1-96 96H128a96 96 0 0 1-96-96V416a96 96 0 0 1 96-96Zm-20 180v472a20 20 0 0 0 20 20h768a20 20 0 0 0 20-20V416Z" fill="black" />
+  <path fill-rule="evenodd" d="M512 404a272 272 0 1 0 0 544 272 272 0 0 0 0-544Zm0 78a194 194 0 1 1 0 388 194 194 0 0 1 0-388Z" fill="black" />
+  <path d="M512 676V542m0 134 102 59" fill="black" stroke="black" stroke-width="58" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M483 650V542a29 29 0 0 1 58 0v108Z" fill="black" stroke="black" />
+  <path d="m512 647 102 59a29 29 0 0 1-29 50l-102-59Z" fill="black" stroke="black" />
+  <circle cx="512" cy="676" r="38" fill="black" />
+</g>
+</svg>

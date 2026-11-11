@@ -65,44 +65,67 @@ import UserNotifications
         let shouldRequest = enabled && !authorizationAttempted
 
         // Reserve IDs before any await: denial, delivery failure and acknowledgment cannot replay them.
-        let requests = batches.compactMap { batch -> UNNotificationRequest? in
-            guard seenBatchIDs.insert(batch.id).inserted else { return nil }
-            let warnings = batch.warnings.filter { $0.threshold != .none }
-            guard !warnings.isEmpty else { return nil }
-            let shown = warnings.prefix(Self.maximumTaskIDs)
-            let content = UNMutableNotificationContent()
-            content.sound = .default
-            content.title = "Budget warning"
-            content.body = shown.map {
-                "\(path($0.taskID)): lifetime budget \($0.threshold.rawValue)% reached"
-            }.joined(separator: "\n")
-            if shown.count < warnings.count {
-                content.body += "\nAnd \(warnings.count - shown.count) more budget warnings."
-            }
-            content.userInfo = ["taskIDs": shown.map { $0.taskID.uuidString.lowercased() }]
-            return UNNotificationRequest(identifier: "budget.\(batch.id.uuidString.lowercased())",
-                                         content: content, trigger: nil)
-        }
+        let requests = batches.compactMap(makeRequest)
         guard shouldRequest || !requests.isEmpty else { return }
         let previous = pending
         let generation = generation
         pending = Task { @MainActor in
-            if let previous { await previous.value }
-            guard self.generation == generation else { return }
-            let status = await authorizationStatus()
-            guard self.generation == generation else { return }
-            var allowed = status == .authorized || status == .provisional
-            if shouldRequest && !authorizationAttempted {
-                authorizationAttempted = true
-                if status == .notDetermined {
-                    allowed = (try? await requestAuthorization()) == true
-                }
+            await self.deliver(
+                requests,
+                previous: previous,
+                generation: generation,
+                shouldRequest: shouldRequest,
+            )
+        }
+    }
+
+    private func makeRequest(for batch: BudgetWarningBatch) -> UNNotificationRequest? {
+        guard seenBatchIDs.insert(batch.id).inserted else { return nil }
+        let warnings = batch.warnings.filter { $0.threshold != .none }
+        guard !warnings.isEmpty else { return nil }
+        let shown = warnings.prefix(Self.maximumTaskIDs)
+        let content = UNMutableNotificationContent()
+        content.sound = .default
+        content.title = "Budget warning"
+        content.body = shown.map {
+            "\(path($0.taskID)): lifetime budget \($0.threshold.rawValue)% reached"
+        }.joined(separator: "\n")
+        if shown.count < warnings.count {
+            content.body += "\nAnd \(warnings.count - shown.count) more budget warnings."
+        }
+        content.userInfo = ["taskIDs": shown.map { $0.taskID.uuidString.lowercased() }]
+        return UNNotificationRequest(
+            identifier: "budget.\(batch.id.uuidString.lowercased())",
+            content: content,
+            trigger: nil,
+        )
+    }
+
+    private func deliver(
+        _ requests: [UNNotificationRequest],
+        previous: Task<Void, Never>?,
+        generation: UUID,
+        shouldRequest: Bool,
+    ) async {
+        if let previous { await previous.value }
+        guard self.generation == generation else { return }
+        let status = await authorizationStatus()
+        guard self.generation == generation else { return }
+        var allowed = status == .authorized || status == .provisional
+        if shouldRequest && !authorizationAttempted {
+            authorizationAttempted = true
+            if status == .notDetermined {
+                allowed = (try? await requestAuthorization()) == true
             }
-            guard allowed else { return }
-            for request in requests {
-                guard self.generation == generation else { return }
-                // Delivery is best-effort and never changes the workspace.
-                do { try await deliver(request) } catch { continue }
+        }
+        guard allowed else { return }
+        for request in requests {
+            guard self.generation == generation else { return }
+            // Delivery is best-effort and never changes the workspace.
+            do {
+                try await deliver(request)
+            } catch {
+                continue
             }
         }
     }

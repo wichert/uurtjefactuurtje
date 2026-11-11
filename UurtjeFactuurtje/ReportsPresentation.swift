@@ -35,7 +35,11 @@ struct WeekReturnContext {
     var visibleProjects: [Project] {
         (track.workspace.snapshot?.projects ?? [])
             .filter { includeArchived || !$0.isArchived }
-            .sorted { $0.name == $1.name ? $0.id.uuidString < $1.id.uuidString : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .sorted {
+                $0.name == $1.name
+                    ? $0.id.uuidString < $1.id.uuidString
+                    : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
     }
 
     func moveWeek(_ offset: Int, now: Int64, calendar: Calendar) throws {
@@ -151,43 +155,75 @@ struct WeekReturnContext {
         }
         do {
             if mode == .week {
-                let value = try weeklyReport(now: now, calendar: calendar, firstWeekday: weekday)
-                let amounts = try ReportProjection.amounts(totals: value.projectTotals, projects: value.projects)
-                week = value
-                weeklyAmounts = amounts
+                try refreshWeekly(now: now, calendar: calendar, firstWeekday: weekday)
             } else if let value = try projectReport(calendar: calendar, firstWeekday: weekday) {
-                var taskAmounts: [UUID: CurrencyAmount] = [:]
-                var entryAmounts: [UUID: CurrencyAmount] = [:]
-                for task in value.tasks {
-                    taskAmounts[task.id] = try ReportProjection.amount(seconds: value.taskTotals[task.id]?.totalSeconds ?? 0, project: value.project)
-                }
-                for rows in value.entriesByLeaf.values {
-                    for row in rows { entryAmounts[row.id] = try ReportProjection.amount(seconds: row.seconds, project: value.project) }
-                }
-                let total = try ReportProjection.amount(seconds: value.total.totalSeconds, project: value.project)
-                let ids = Set(value.tasks.map(\.id))
-                expandedTaskIDs.formIntersection(ids)
-                if let leaf = selectedLeafID, !ids.contains(leaf) || value.tasks.contains(where: { $0.parentTaskID == leaf }) {
-                    selectedLeafID = nil
-                    selectedEntryID = nil
-                }
-                if let entry = selectedEntryID,
-                   !(value.entriesByLeaf[selectedLeafID ?? UUID()] ?? []).contains(where: { $0.id == entry }) {
-                    selectedEntryID = nil
-                }
-                project = value
-                self.taskAmounts = taskAmounts
-                self.entryAmounts = entryAmounts
-                projectAmount = total
+                try applyProjectReport(value)
             } else {
-                project = nil
-                taskAmounts = [:]
-                entryAmounts = [:]
-                projectAmount = nil
+                clearProjectResults()
             }
         } catch {
             clearResults()
             self.error = "Report unavailable: \(error)"
+        }
+    }
+
+    private func refreshWeekly(now: Int64, calendar: Calendar, firstWeekday: Int) throws {
+        let value = try weeklyReport(now: now, calendar: calendar, firstWeekday: firstWeekday)
+        let amounts = try ReportProjection.amounts(
+            totals: value.projectTotals,
+            projects: value.projects,
+        )
+        week = value
+        weeklyAmounts = amounts
+    }
+
+    private func clearProjectResults() {
+        project = nil
+        taskAmounts = [:]
+        entryAmounts = [:]
+        projectAmount = nil
+    }
+
+    private func applyProjectReport(_ value: ProjectReport) throws {
+        var taskAmounts: [UUID: CurrencyAmount] = [:]
+        var entryAmounts: [UUID: CurrencyAmount] = [:]
+        for task in value.tasks {
+            let seconds = value.taskTotals[task.id]?.totalSeconds ?? 0
+            taskAmounts[task.id] = try ReportProjection.amount(
+                seconds: seconds,
+                project: value.project,
+            )
+        }
+        for rows in value.entriesByLeaf.values {
+            for row in rows {
+                entryAmounts[row.id] = try ReportProjection.amount(
+                    seconds: row.seconds,
+                    project: value.project,
+                )
+            }
+        }
+        projectAmount = try ReportProjection.amount(
+            seconds: value.total.totalSeconds,
+            project: value.project,
+        )
+        reconcileProjectSelection(in: value)
+        project = value
+        self.taskAmounts = taskAmounts
+        self.entryAmounts = entryAmounts
+    }
+
+    private func reconcileProjectSelection(in value: ProjectReport) {
+        let ids = Set(value.tasks.map(\.id))
+        expandedTaskIDs.formIntersection(ids)
+        if let leaf = selectedLeafID,
+           !ids.contains(leaf) || value.tasks.contains(where: { $0.parentTaskID == leaf }) {
+            selectedLeafID = nil
+            selectedEntryID = nil
+        }
+        let entries = value.entriesByLeaf[selectedLeafID ?? UUID()] ?? []
+        if let entry = selectedEntryID,
+           !entries.contains(where: { $0.id == entry }) {
+            selectedEntryID = nil
         }
     }
 

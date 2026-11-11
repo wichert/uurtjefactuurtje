@@ -50,7 +50,10 @@ private struct WeekSegment: Identifiable {
                         let seconds = day.projects[project.id]?.totalSeconds ?? 0
                         let lower = height
                         height += Double(seconds) / 3600
-                        return WeekSegment(day: index, project: project, seconds: seconds, lowerHours: lower, upperHours: height)
+                        return WeekSegment(
+                            day: index, project: project, seconds: seconds,
+                            lowerHours: lower, upperHours: height,
+                        )
                     }
                 }
                 Chart(segments) { segment in
@@ -58,7 +61,11 @@ private struct WeekSegment: Identifiable {
                             yStart: .value("From hours", segment.lowerHours),
                             yEnd: .value("To hours", segment.upperHours))
                         .foregroundStyle(by: .value("Project", segment.series))
-                        .accessibilityLabel("\(segment.series), \(ReportFormatting.day(week.days[segment.day].date, calendar: reports.calendar))")
+                        .accessibilityLabel(
+                            "\(segment.series), " + ReportFormatting.day(
+                                week.days[segment.day].date, calendar: reports.calendar,
+                            )
+                        )
                         .accessibilityValue(ReportFormatting.duration(seconds: segment.seconds))
                 }
                 .chartXScale(domain: -0.5...6.5)
@@ -69,12 +76,14 @@ private struct WeekSegment: Identifiable {
                             Rectangle().fill(.clear).contentShape(Rectangle())
                                 .onContinuousHover { phase in
                                     switch phase {
-                                    case .active(let point): hoveredSegment = hit(point, frame: frame, proxy: proxy, segments: segments)
+                                    case let .active(point): hoveredSegment = hitActive(point, frame, proxy, segments)
                                     case .ended: hoveredSegment = nil
                                     }
                                 }
                                 .gesture(SpatialTapGesture().onEnded { event in
-                                    if let segment = hit(event.location, frame: frame, proxy: proxy, segments: segments),
+                                    if let segment = hit(
+                                        event.location, frame: frame, proxy: proxy, segments: segments
+                                    ),
                                        week.days.indices.contains(segment.day) {
                                         reports.openDay(projectID: segment.project.id, day: week.days[segment.day])
                                     }
@@ -84,7 +93,7 @@ private struct WeekSegment: Identifiable {
                 }
                 .frame(minHeight: 180)
                 if let segment = hoveredSegment, week.days.indices.contains(segment.day) {
-                    Text("\(segment.project.name) — \(ReportFormatting.day(week.days[segment.day].date, calendar: reports.calendar)): \(ReportFormatting.duration(seconds: segment.seconds))")
+                    Text(segmentTooltip(segment, week: week))
                 }
                 Text("Exact project/day values; select any ordinary cell to open that day.")
                 ScrollView(.horizontal) {
@@ -105,10 +114,30 @@ private struct WeekSegment: Identifiable {
                         }
                     }
                 }
-                Text("Amounts use current project rates, grouped by currency; no conversion. Chart hours are geometry only.")
+                Text("""
+                Amounts use current project rates, grouped by currency; no conversion. \
+                Chart hours are geometry only.
+                """)
                     .font(.caption)
             }
         }
+    }
+
+    private func segmentTooltip(_ segment: WeekSegment, week: WeeklyReport) -> String {
+        let day = ReportFormatting.day(
+            week.days[segment.day].date, calendar: reports.calendar
+        )
+        return "\(segment.project.name) — \(day): "
+            + ReportFormatting.duration(seconds: segment.seconds)
+    }
+
+    private func hitActive(
+        _ point: CGPoint,
+        _ frame: CGRect,
+        _ proxy: ChartProxy,
+        _ segments: [WeekSegment],
+    ) -> WeekSegment? {
+        hit(point, frame: frame, proxy: proxy, segments: segments)
     }
 
     @ViewBuilder private func cell(project: Project, day: WeeklyReportDay) -> some View {
@@ -125,11 +154,13 @@ private struct WeekSegment: Identifiable {
 
     private func hit(_ point: CGPoint, frame: CGRect, proxy: ChartProxy, segments: [WeekSegment]) -> WeekSegment? {
         guard frame.contains(point),
-              let x: Double = proxy.value(atX: point.x - frame.minX),
-              let y: Double = proxy.value(atY: point.y - frame.minY) else { return nil }
-        let day = Int(x.rounded())
-        guard abs(x - Double(day)) <= 0.5 else { return nil }
-        return segments.first { $0.day == day && $0.lowerHours <= y && y < $0.upperHours }
+              let horizontal: Double = proxy.value(atX: point.x - frame.minX),
+              let vertical: Double = proxy.value(atY: point.y - frame.minY) else { return nil }
+        let day = Int(horizontal.rounded())
+        guard abs(horizontal - Double(day)) <= 0.5 else { return nil }
+        return segments.first {
+            $0.day == day && $0.lowerHours <= vertical && vertical < $0.upperHours
+        }
     }
 
     private func move(_ offset: Int) {

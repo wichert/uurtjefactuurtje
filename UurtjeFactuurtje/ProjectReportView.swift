@@ -78,8 +78,14 @@ private struct ReportTaskRow: Identifiable {
             if let report = reports.project, let totalAmount = reports.projectAmount {
                 Text("\(report.project.name)\(report.project.isArchived ? " (archived)" : "") — \(periodLabel(report))")
                 Text("Time zone: \(report.timeZoneIdentifier)")
-                Text("Period total: \(ReportFormatting.duration(seconds: report.total.totalSeconds)); \(ReportFormatting.amount(totalAmount, locale: locale))")
-                Text("Current rate: \(NSDecimalNumber(decimal: report.project.hourlyRate).stringValue) \(report.project.currencyCode) per hour. Current rates apply to all history; rows round independently, without conversion.")
+                let totalTime = ReportFormatting.duration(seconds: report.total.totalSeconds)
+                let total = ReportFormatting.amount(totalAmount, locale: locale)
+                Text("Period total: \(totalTime); \(total)")
+                let rate = NSDecimalNumber(decimal: report.project.hourlyRate).stringValue
+                Text("""
+                    Current rate: \(rate) \(report.project.currencyCode) per hour. Current rates apply to all history; \
+                    rows round independently, without conversion.
+                    """)
                     .font(.caption)
                 if report.hasOpenEntry {
                     Text(reports.openLabel(entryID: reports.track.workspace.snapshot?.activeTimer?.entryID))
@@ -112,7 +118,9 @@ private struct ReportTaskRow: Identifiable {
             if row.hasChildren {
                 Button(reports.expandedTaskIDs.contains(row.id) ? "▾" : "▸") {
                     if !reports.expandedTaskIDs.insert(row.id).inserted { reports.expandedTaskIDs.remove(row.id) }
-                }.accessibilityLabel("\(reports.expandedTaskIDs.contains(row.id) ? "Collapse" : "Expand") \(row.task.name)")
+                }.accessibilityLabel(
+                    "\(reports.expandedTaskIDs.contains(row.id) ? "Collapse" : "Expand") \(row.task.name)"
+                )
             } else {
                 Button(row.task.name) {
                     reports.selectedLeafID = row.id
@@ -124,7 +132,7 @@ private struct ReportTaskRow: Identifiable {
             if let amount = reports.taskAmounts[row.id] { Text(ReportFormatting.amount(amount, locale: locale)) }
             if let budget = row.task.budgetMinutes {
                 if let used = report.lifetimeUsage[row.id] {
-                    Text("Lifetime usage: \(ReportFormatting.budgetHours(seconds: used, locale: locale)) / \(ReportFormatting.budgetHours(seconds: Decimal(budget) * 60, locale: locale)); \(ReportFormatting.budgetBalance(used: used, budget: budget, locale: locale)); band: \(report.displayBands[row.id].map { band($0) } ?? "unavailable")")
+                    Text(lifetimeUsage(used: used, budget: budget, report: report, row: row))
                 } else {
                     Text("Lifetime budget usage unavailable")
                 }
@@ -135,15 +143,22 @@ private struct ReportTaskRow: Identifiable {
     @ViewBuilder private func entryRow(_ row: ReportEntryRow, report: ProjectReport) -> some View {
         VStack(alignment: .leading) {
             let entry = row.entry
-            Text("Saved entry: \(ReportFormatting.instant(entry.startAt, calendar: reports.calendar)) – \(entry.endAt.map { ReportFormatting.instant($0, calendar: reports.calendar) } ?? "open")")
-            Text("Current rate: \(NSDecimalNumber(decimal: report.project.hourlyRate).stringValue) \(report.project.currencyCode) per hour")
+            Text(savedInterval(entry))
+            Text(currentRate(project: report.project))
             if let interval = row.included {
-                Text("Included interval: \(ReportFormatting.interval(interval.startAt, interval.endAt, calendar: reports.calendar))")
+                let included = ReportFormatting.interval(
+                    interval.startAt,
+                    interval.endAt,
+                    calendar: reports.calendar,
+                )
+                Text("Included interval: \(included)")
             } else {
                 Text("Included interval: zero-length open entry")
             }
             Text("Included duration: \(ReportFormatting.duration(seconds: row.seconds))")
-            if let amount = reports.entryAmounts[row.id] { Text("Current-rate amount: \(ReportFormatting.amount(amount, locale: locale))") }
+            if let amount = reports.entryAmounts[row.id] {
+                Text("Current-rate amount: \(ReportFormatting.amount(amount, locale: locale))")
+            }
             if row.isProvisional { Text(reports.openLabel(entryID: entry.id)) }
             if entry.endAt != nil {
                 Button("Edit saved entry…") {
@@ -153,6 +168,34 @@ private struct ReportTaskRow: Identifiable {
                 Button("Review open time…") { reports.reviewTime() }
             }
         }.padding(.vertical, 4)
+    }
+
+    private func lifetimeUsage(
+        used: Decimal,
+        budget: Int64,
+        report: ProjectReport,
+        row: ReportTaskRow,
+    ) -> String {
+        let allocated = ReportFormatting.budgetHours(seconds: used, locale: locale)
+        let limit = ReportFormatting.budgetHours(
+            seconds: Decimal(budget) * 60,
+            locale: locale,
+        )
+        let balance = ReportFormatting.budgetBalance(used: used, budget: budget, locale: locale)
+        let displayBand = report.displayBands[row.id].map { band($0) } ?? "unavailable"
+        return "Lifetime usage: \(allocated) / \(limit); \(balance); band: \(displayBand)"
+    }
+
+    private func savedInterval(_ entry: TimeEntry) -> String {
+        let calendar = reports.calendar
+        let start = ReportFormatting.instant(entry.startAt, calendar: calendar)
+        let end = entry.endAt.map { ReportFormatting.instant($0, calendar: calendar) } ?? "open"
+        return "Saved entry: \(start) – \(end)"
+    }
+
+    private func currentRate(project: Project) -> String {
+        let rate = NSDecimalNumber(decimal: project.hourlyRate).stringValue
+        return "Current rate: \(rate) \(project.currencyCode) per hour"
     }
 
     private func periodLabel(_ report: ProjectReport) -> String {
