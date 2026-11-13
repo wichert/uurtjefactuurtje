@@ -1,8 +1,9 @@
-import Foundation
 import Darwin
+import Foundation
 import SQLite3
 import Testing
 import XCTest
+
 @testable import LibraryStore
 
 private enum RecoveryTestError: Error { case injected }
@@ -13,8 +14,10 @@ private func temporaryLibrary() -> URL {
 }
 
 private func expectFailure<T>(_ operation: () async throws -> T) async {
-    do { _ = try await operation(); Issue.record("expected failure") }
-    catch { }
+    do {
+        _ = try await operation()
+        Issue.record("expected failure")
+    } catch {}
 }
 
 private func populated(_ root: URL) async throws {
@@ -27,9 +30,11 @@ private func populated(_ root: URL) async throws {
 private func addProject(_ library: Library, revision: Int64) async throws -> Committed<UUID> {
     let id = UUID()
     return try await library.transact(expectedRevision: revision) { storage, _ in
-        try storage.runCommand("INSERT INTO projects VALUES (?,?,?,?,?)", bindings: [
-            .text(id.uuidString.lowercased()), .text("Client"), .text("12"), .text("EUR"), .integer(0)
-        ], expectedChanges: 1)
+        try storage.runCommand(
+            "INSERT INTO projects VALUES (?,?,?,?,?)",
+            bindings: [
+                .text(id.uuidString.lowercased()), .text("Client"), .text("12"), .text("EUR"), .integer(0)
+            ], expectedChanges: 1)
         return id
     }
 }
@@ -42,9 +47,11 @@ final class RecoveryCrashProbe: XCTestCase {
         let root = URL(fileURLWithPath: directory)
         switch env["UF_RECOVERY_ACTION"] {
         case "busy":
-            do { let owner = try await Library.open(at: root); await owner.close(); Darwin._exit(91) }
-            catch LibraryOpenError.busy { Darwin._exit(90) }
-            catch { Darwin._exit(92) }
+            do {
+                let owner = try await Library.open(at: root)
+                await owner.close()
+                Darwin._exit(91)
+            } catch LibraryOpenError.busy { Darwin._exit(90) } catch { Darwin._exit(92) }
         case "hot":
             var database: OpaquePointer?
             guard sqlite3_open(root.appendingPathComponent("library.sqlite").path, &database) == SQLITE_OK else {
@@ -53,7 +60,9 @@ final class RecoveryCrashProbe: XCTestCase {
             let statement = "PRAGMA journal_mode=DELETE; PRAGMA cache_size=1; PRAGMA cache_spill=ON; BEGIN IMMEDIATE;"
             guard sqlite3_exec(database, statement, nil, nil, nil) == SQLITE_OK else { Darwin._exit(94) }
             for index in 0..<3000 {
-                let command = "INSERT INTO projects VALUES ('\(UUID().uuidString.lowercased())','\(String(repeating: "X", count: 250))\(index)','12','EUR',0)"
+                let identifier = UUID().uuidString.lowercased()
+                let longName = String(repeating: "X", count: 250) + "\(index)"
+                let command = "INSERT INTO projects VALUES ('\(identifier)','\(longName)','12','EUR',0)"
                 guard sqlite3_exec(database, command, nil, nil, nil) == SQLITE_OK else { Darwin._exit(95) }
             }
             Darwin._exit(85)
@@ -63,11 +72,13 @@ final class RecoveryCrashProbe: XCTestCase {
             let preferences = env["UF_RECOVERY_ACTION"] == "settings"
             // Mutation/settings hooks are installed only after initial open/recovery.
             let armed = FaultSwitch()
-            let hooks = RecoveryHooks(recovery: { point in
-                if (!mutation && !preferences || armed.enabled), point.rawValue == target { Darwin._exit(86) }
-            }, io: { point in
-                if armed.enabled, point.rawValue == target { Darwin._exit(86) }
-            })
+            let hooks = RecoveryHooks(
+                recovery: { point in
+                    if !mutation && !preferences || armed.enabled, point.rawValue == target { Darwin._exit(86) }
+                },
+                failureInjector: { point in
+                    if armed.enabled, point.rawValue == target { Darwin._exit(86) }
+                })
             do {
                 let library = try await Library.open(at: root, hooks: hooks)
                 armed.enable()
@@ -91,8 +102,10 @@ private final class FaultSwitch: @unchecked Sendable {
 private func subprocess(_ root: URL, action: String, point: String = "") throws -> Int32 {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-    process.arguments = ["xctest", "-XCTest", "LibraryStoreTests.RecoveryCrashProbe/testProbe",
-                         Bundle(for: RecoveryCrashProbe.self).bundleURL.path]
+    process.arguments = [
+        "xctest", "-XCTest", "LibraryStoreTests.RecoveryCrashProbe/testProbe",
+        Bundle(for: RecoveryCrashProbe.self).bundleURL.path
+    ]
     var environment = ProcessInfo.processInfo.environment
     environment["UF_RECOVERY_ROOT"] = root.path
     environment["UF_RECOVERY_ACTION"] = action
@@ -207,8 +220,9 @@ struct RecoveryTests {
                     defer { try? FileManager.default.removeItem(at: root) }
                     if mode == 1 { try await populated(root) }
                     if mode == 2 { try await hotJournal(root) }
-                    if crash { #expect(try subprocess(root, action: "crash", point: point.rawValue) == 86) }
-                    else {
+                    if crash {
+                        #expect(try subprocess(root, action: "crash", point: point.rawValue) == 86)
+                    } else {
                         let hooks = RecoveryHooks(recovery: { if $0 == point { throw RecoveryTestError.injected } })
                         await expectFailure { try await Library.open(at: root, hooks: hooks) }
                     }
@@ -216,7 +230,9 @@ struct RecoveryTests {
                     let state = try await recovered.snapshot()
                     #expect(state.revision == (mode == 1 ? 1 : 0))
                     #expect(state.projects.count == (mode == 1 ? 1 : 0))
-                    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("library.sqlite-journal").path))
+                    #expect(
+                        !FileManager.default.fileExists(
+                            atPath: root.appendingPathComponent("library.sqlite-journal").path))
                     await recovered.close()
                 }
             }
@@ -236,7 +252,9 @@ struct RecoveryTests {
             let index = RecoveryPoint.allCases.firstIndex { $0.rawValue == point }
             if point == "sessionReopened" || (index != nil && index! >= readyIndex) {
                 #expect(state.revision == 2 && state.projects.count == 2)
-            } else { #expect(state.revision == 1 && state.projects.count == 1) }
+            } else {
+                #expect(state.revision == 1 && state.projects.count == 1)
+            }
             _ = try await addProject(owner, revision: state.revision)
             await owner.close()
             let next = try await Library.open(at: root)
@@ -251,11 +269,17 @@ struct RecoveryTests {
             let root = temporaryLibrary()
             defer { try? FileManager.default.removeItem(at: root) }
             let armed = FaultSwitch()
-            let library = try await Library.open(at: root, hooks: RecoveryHooks(recovery: {
-                if armed.enabled, $0 == point { throw RecoveryTestError.injected }
-            }))
+            let library = try await Library.open(
+                at: root,
+                hooks: RecoveryHooks(recovery: {
+                    if armed.enabled, $0 == point { throw RecoveryTestError.injected }
+                }))
             armed.enable()
-            await #expect(throws: LibraryAccessError.publicationIndeterminate) { try await addProject(library, revision: 0) }
+            await #expect(throws: LibraryAccessError.publicationIndeterminate) {
+                try await addProject(
+                    library,
+                    revision: 0)
+            }
             await #expect(throws: LibraryAccessError.unavailable) { try await library.snapshot() }
             await #expect(throws: LibraryAccessError.unavailable) { try await library.setFirstWeekday(4) }
             await #expect(throws: LibraryOpenError.busy) { try await Library.open(at: root) }
@@ -267,7 +291,9 @@ struct RecoveryTests {
     }
 
     @Test func invalidAndUnsafeArtifactsPreserveBytes() async throws {
-        for name in ["library.sqlite-wal", "library.sqlite-shm", "library.sqlite-other", ".recovery-ready", ".recovery-intent"] {
+        for name in [
+            "library.sqlite-wal", "library.sqlite-shm", "library.sqlite-other", ".recovery-ready", ".recovery-intent"
+        ] {
             let root = temporaryLibrary()
             defer { try? FileManager.default.removeItem(at: root) }
             try await populated(root)
@@ -288,9 +314,13 @@ struct RecoveryTests {
                 let source = root.appendingPathComponent("source")
                 try Data("evidence".utf8).write(to: source)
                 let target = root.appendingPathComponent(name)
-                if kind == "symlink" { try FileManager.default.createSymbolicLink(at: target, withDestinationURL: source) }
+                if kind == "symlink" {
+                    try FileManager.default.createSymbolicLink(at: target, withDestinationURL: source)
+                }
                 if kind == "hardlink" { try FileManager.default.linkItem(at: source, to: target) }
-                if kind == "directory" { try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false) }
+                if kind == "directory" {
+                    try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+                }
                 await expectFailure { try await Library.open(at: root) }
                 #expect(try Data(contentsOf: source) == Data("evidence".utf8))
             }
@@ -299,8 +329,12 @@ struct RecoveryTests {
             let root = temporaryLibrary()
             defer { try? FileManager.default.removeItem(at: root) }
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            if name == "library.sqlite-journal" { try Data("orphan".utf8).write(to: root.appendingPathComponent(name)) }
-            else { try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true) }
+            if name == "library.sqlite-journal" {
+                try Data("orphan".utf8).write(to: root.appendingPathComponent(name))
+            } else {
+                try FileManager.default.createDirectory(
+                    at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+            }
             await expectFailure { try await Library.open(at: root) }
             #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("library.sqlite").path))
         }
@@ -311,7 +345,8 @@ struct RecoveryTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try await hotJournal(root, invalidOriginal: true)
         let settings = root.appendingPathComponent("settings.plist")
-        let data = try PropertyListSerialization.data(fromPropertyList: ["version": 1, "firstWeekday": 6], format: .xml, options: 0)
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: ["version": 1, "firstWeekday": 6], format: .xml, options: 0)
         try data.write(to: settings)
         let main = root.appendingPathComponent("library.sqlite")
         let bytes = try Data(contentsOf: main)
@@ -324,14 +359,19 @@ struct RecoveryTests {
     }
 
     @Test func conflictingReadyAndIntentIdentitiesFailClosed() async throws {
-        for name in ["library.sqlite", ".recovery-intent", ".recovery-work/candidate/library.sqlite", ".recovery-work/original/library.sqlite"] {
+        for name in [
+            "library.sqlite", ".recovery-intent", ".recovery-work/candidate/library.sqlite",
+            ".recovery-work/original/library.sqlite"
+        ] {
             let root = temporaryLibrary()
             defer { try? FileManager.default.removeItem(at: root) }
             try await populated(root)
             await expectFailure {
-                try await Library.open(at: root, hooks: RecoveryHooks(recovery: {
-                    if $0 == .ready { throw RecoveryTestError.injected }
-                }))
+                try await Library.open(
+                    at: root,
+                    hooks: RecoveryHooks(recovery: {
+                        if $0 == .ready { throw RecoveryTestError.injected }
+                    }))
             }
             let artifact = root.appendingPathComponent(name)
             let evidence = Data("changed identity".utf8)
@@ -343,9 +383,11 @@ struct RecoveryTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try await populated(root)
         await expectFailure {
-            try await Library.open(at: root, hooks: RecoveryHooks(recovery: {
-                if $0 == .intent { throw RecoveryTestError.injected }
-            }))
+            try await Library.open(
+                at: root,
+                hooks: RecoveryHooks(recovery: {
+                    if $0 == .intent { throw RecoveryTestError.injected }
+                }))
         }
         let main = root.appendingPathComponent("library.sqlite")
         let evidence = Data("foreign generation".utf8)
@@ -380,17 +422,21 @@ struct RecoveryTests {
     }
 
     @Test func settingsFaultsAndCrashesExposeCompleteGenerations() async throws {
-        let boundaries: [RecoveryIOPoint] = [.settingsTempCreated, .settingsWritten, .settingsSynced,
-                                            .settingsRenamed, .settingsDirectorySynced,
-                                            .fileSync, .fullSync, .rename, .directorySync]
+        let boundaries: [RecoveryIOPoint] = [
+            .settingsTempCreated, .settingsWritten, .settingsSynced,
+            .settingsRenamed, .settingsDirectorySynced,
+            .fileSync, .fullSync, .rename, .directorySync
+        ]
         for point in boundaries {
             for crash in [false, true] {
                 let root = temporaryLibrary()
                 defer { try? FileManager.default.removeItem(at: root) }
                 let armed = FaultSwitch()
-                let owner = try await Library.open(at: root, hooks: RecoveryHooks(io: {
-                    if armed.enabled, $0 == point { throw RecoveryTestError.injected }
-                }))
+                let owner = try await Library.open(
+                    at: root,
+                    hooks: RecoveryHooks(failureInjector: {
+                        if armed.enabled, $0 == point { throw RecoveryTestError.injected }
+                    }))
                 _ = try await owner.setFirstWeekday(3)
                 if crash {
                     await owner.close()
@@ -400,12 +446,15 @@ struct RecoveryTests {
                     await expectFailure { try await owner.setFirstWeekday(7) }
                     if point == .settingsRenamed || point == .settingsDirectorySynced || point == .rename {
                         await #expect(throws: LibraryAccessError.unavailable) { try await owner.snapshot() }
-                    } else { #expect(try await owner.settings().firstWeekday == 3) }
+                    } else {
+                        #expect(try await owner.settings().firstWeekday == 3)
+                    }
                     await owner.close()
                 }
                 let next = try await Library.open(at: root)
-                #expect(try await next.settings().firstWeekday ==
-                        (point == .settingsRenamed || point == .settingsDirectorySynced ? 7 : 3))
+                #expect(
+                    try await next.settings().firstWeekday
+                        == (point == .settingsRenamed || point == .settingsDirectorySynced ? 7 : 3))
                 #expect(try await next.snapshot().revision == 0)
                 await next.close()
             }
@@ -419,9 +468,11 @@ struct RecoveryTests {
             try await populated(root)
             let before = try Data(contentsOf: root.appendingPathComponent("library.sqlite"))
             await expectFailure {
-                try await Library.open(at: root, hooks: RecoveryHooks(io: {
-                    if $0 == point { throw RecoveryTestError.injected }
-                }))
+                try await Library.open(
+                    at: root,
+                    hooks: RecoveryHooks(failureInjector: {
+                        if $0 == point { throw RecoveryTestError.injected }
+                    }))
             }
             #expect(try Data(contentsOf: root.appendingPathComponent("library.sqlite")) == before)
         }
@@ -431,9 +482,11 @@ struct RecoveryTests {
         let root = temporaryLibrary()
         defer { try? FileManager.default.removeItem(at: root) }
         let latch = PublicationLatch()
-        let owner = try await Library.open(at: root, hooks: RecoveryHooks(io: {
-            if $0 == .privateCommitted { latch.pauseIfArmed() }
-        }))
+        let owner = try await Library.open(
+            at: root,
+            hooks: RecoveryHooks(failureInjector: {
+                if $0 == .privateCommitted { latch.pauseIfArmed() }
+            }))
         latch.arm()
         let mutation = Task { try await addProject(owner, revision: 0) }
         await latch.entered()
@@ -481,26 +534,34 @@ private final class PublicationLatch: @unchecked Sendable {
     func entered() async {
         await Task.detached { self.waitUntilEntered() }.value
     }
-    func resume() { condition.withLock { mayLeave = true; condition.broadcast() } }
+    func resume() {
+        condition.withLock {
+            mayLeave = true
+            condition.broadcast()
+        }
+    }
 }
 
 private func seedRecoveryV1(_ root: URL) throws -> (UUID, UUID, UUID) {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let url = root.appendingPathComponent("library.sqlite")
     try createProductionV1(url)
-    let p = UUID(), task = UUID(), entry = UUID()
-    var db: OpaquePointer?
-    let rc = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE, nil)
-    guard rc == SQLITE_OK, let db else { throw StorageError.sqlite(rc, "seed v1") }
-    defer { sqlite3_close_v2(db) }
+    let project = UUID()
+    let task = UUID()
+    let entry = UUID()
+    var database: OpaquePointer?
+    let resultCode = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE, nil)
+    guard resultCode == SQLITE_OK, let database else { throw StorageError.sqlite(resultCode, "seed v1") }
+    defer { sqlite3_close_v2(database) }
     let sql = """
-        INSERT INTO projects VALUES ('\(p.uuidString.lowercased())','Client','1','EUR',0);
-        INSERT INTO tasks VALUES ('\(task.uuidString.lowercased())','\(p.uuidString.lowercased())',NULL,'Work',1,100);
+        INSERT INTO projects VALUES ('\(project.uuidString.lowercased())','Client','1','EUR',0);
+        INSERT INTO tasks VALUES ('\(task.uuidString.lowercased())',
+            '\(project.uuidString.lowercased())',NULL,'Work',1,100);
         INSERT INTO time_entries VALUES ('\(entry.uuidString.lowercased())','\(task.uuidString.lowercased())',0,1);
         """
-    let result = sqlite3_exec(db, sql, nil, nil, nil)
-    guard result == SQLITE_OK else { throw StorageError.sqlite(result, String(cString: sqlite3_errmsg(db))) }
-    return (p, task, entry)
+    let result = sqlite3_exec(database, sql, nil, nil, nil)
+    guard result == SQLITE_OK else { throw StorageError.sqlite(result, String(cString: sqlite3_errmsg(database))) }
+    return (project, task, entry)
 }
 
 extension RecoveryTests {
@@ -521,7 +582,8 @@ extension RecoveryTests {
                 }
                 if index <= readyIndex { #expect(try Data(contentsOf: main) == original) }
                 let candidate = root.appendingPathComponent(".recovery-work/candidate/library.sqlite")
-                let readyBytes: Data? = index >= readyIndex && FileManager.default.fileExists(atPath: candidate.path)
+                let readyBytes: Data? =
+                    index >= readyIndex && FileManager.default.fileExists(atPath: candidate.path)
                     ? try Data(contentsOf: candidate) : nil
                 let recovered = try await Library.open(at: root)
                 let state = try await recovered.snapshot()

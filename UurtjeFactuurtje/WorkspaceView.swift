@@ -1,6 +1,6 @@
-import SwiftUI
 import AppKit
 import LibraryStore
+import SwiftUI
 
 struct WorkspaceView<ReportsContent: View>: View {
     @Bindable private var presentation: TrackPresentation
@@ -29,11 +29,13 @@ struct WorkspaceView<ReportsContent: View>: View {
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Workspace unavailable").font(.headline)
-                    Text("""
+                    Text(
+                        """
                         Use the library feedback above. Tracking and reports will return \
                         when the library is available.
-                        """)
-                        .fixedSize(horizontal: false, vertical: true)
+                        """
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -95,11 +97,13 @@ struct WorkspaceRecovery: View {
                 Text(host.recoveryMessage)
                     .fixedSize(horizontal: false, vertical: true)
                 if host.workspace.snapshot != nil && !host.available {
-                    Text("""
+                    Text(
+                        """
                         Any retained rows are the last confirmed view and may be stale, \
                         not proof that the last change was saved.
-                        """)
-                        .fixedSize(horizontal: false, vertical: true)
+                        """
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 if host.canReopen {
                     Button("Reopen library and inspect (no replay)") { host.reopen() }

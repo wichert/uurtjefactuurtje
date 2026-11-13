@@ -1,5 +1,5 @@
-import SwiftUI
 import LibraryStore
+import SwiftUI
 
 private struct ReportRefreshKey: Equatable {
     let snapshot: LibrarySnapshot?
@@ -27,12 +27,13 @@ private struct ReportRefreshKey: Equatable {
             let now = Int64(timeline.date.timeIntervalSince1970.rounded(.down))
             let calendar = capturedCalendar
             let workspace = reports.track.workspace
-            let key = ReportRefreshKey(snapshot: workspace.snapshot, availability: workspace.availability,
-                                       timerStatus: workspace.timerStatus, firstWeekday: workspace.firstWeekday,
-                                       mode: reports.mode, anchor: reports.weekAnchor,
-                                       includeArchived: reports.includeArchived, projectID: reports.selectedProjectID,
-                                       scopeTaskID: reports.scopeTaskID, period: reports.period,
-                                       calendar: calendar, second: now)
+            let key = ReportRefreshKey(
+                snapshot: workspace.snapshot, availability: workspace.availability,
+                timerStatus: workspace.timerStatus, firstWeekday: workspace.firstWeekday,
+                mode: reports.mode, anchor: reports.weekAnchor,
+                includeArchived: reports.includeArchived, projectID: reports.selectedProjectID,
+                scopeTaskID: reports.scopeTaskID, period: reports.period,
+                calendar: calendar, second: now)
             VStack(alignment: .leading) {
                 Picker("Report", selection: Binding(get: { reports.mode }, set: { reports.mode = $0 })) {
                     Text("Week").tag(ReportMode.week)

@@ -47,7 +47,8 @@ public actor Library {
         // An unstructured detached task finishes recovery even if its caller cancels.
         try await Task.detached {
             guard directory.isFileURL, directory.path.hasPrefix("/"), !directory.path.contains("\0"),
-                  !directory.pathComponents.contains("..") else {
+                !directory.pathComponents.contains("..")
+            else {
                 throw LibraryOpenError.unsafeState("expected absolute file URL")
             }
             let recovery = Recovery(root: directory, hooks: hooks)
@@ -61,22 +62,36 @@ public actor Library {
                 try await recovery.recover()
                 let session = try recovery.newSession()
                 let storage = try Storage(privateDatabaseAt: session)
-                do { _ = try await storage.snapshot() }
-                catch { await storage.close(); throw error }
+                do { _ = try await storage.snapshot() } catch {
+                    await storage.close()
+                    throw error
+                }
                 return Library(recovery: recovery, lease: lease, storage: storage, sessionURL: session)
-            } catch { lease.release(); throw error }
+            } catch {
+                lease.release()
+                throw error
+            }
         }.value
     }
 
     private func acquire() async throws {
         guard !closeRequested else { throw LibraryAccessError.unavailable }
         try Task.checkCancellation()
-        if !occupied { occupied = true; return }
+        if !occupied {
+            occupied = true
+            return
+        }
         let id = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
-                else { waiters.append(Waiter(id: id, continuation: continuation)) }
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    waiters.append(
+                        Waiter(
+                            id: id,
+                            continuation: continuation))
+                }
             }
         } onCancel: {
             Task { await self.cancelWaiter(id) }
@@ -97,7 +112,9 @@ public actor Library {
             occupied = false
             closeDrain?.resume()
             closeDrain = nil
-        } else { waiters.removeFirst().continuation.resume() }
+        } else {
+            waiters.removeFirst().continuation.resume()
+        }
     }
 
     private func currentStorage() throws -> Storage {
@@ -123,8 +140,7 @@ public actor Library {
         try await acquire()
         defer { release() }
         _ = try currentStorage()
-        do { return try recovery.saveSettings(day) }
-        catch LibraryAccessError.publicationIndeterminate {
+        do { return try recovery.saveSettings(day) } catch LibraryAccessError.publicationIndeterminate {
             available = false
             migrationReceipt = nil
             throw LibraryAccessError.publicationIndeterminate
@@ -148,8 +164,9 @@ public actor Library {
         let activeStorage = try currentStorage()
         let committed: Committed<Value>
         do {
-            committed = try await activeStorage.transact(expectedRevision: expectedRevision,
-                                                         validationNow: validationNow, apply)
+            committed = try await activeStorage.transact(
+                expectedRevision: expectedRevision,
+                validationNow: validationNow, apply)
         } catch StorageError.commitIndeterminate {
             available = false
             migrationReceipt = nil
@@ -162,7 +179,7 @@ public actor Library {
         // Do not observe cancellation after private commit or replay its body.
         do {
             let hooks = recovery.hooks
-            try await Task.detached { try hooks.io(.privateCommitted) }.value
+            try await Task.detached { try hooks.failureInjector(.privateCommitted) }.value
             await activeStorage.close()
             storage = nil
             try await recovery.publish(from: sessionURL)
@@ -172,7 +189,7 @@ public actor Library {
             guard try await reopened.snapshot() == committed.snapshot else {
                 throw LibraryOpenError.unsafeState("published snapshot differs from private commit")
             }
-            try recovery.hooks.io(.sessionReopened)
+            try recovery.hooks.failureInjector(.sessionReopened)
             return committed
         } catch {
             available = false
@@ -184,30 +201,40 @@ public actor Library {
 
     public func createTask(_ request: TaskCreationRequest, expectedRevision: Int64) async throws -> TaskCreation {
         let instant = request.start ? try timerWallSecond() : nil
-        return try await createTaskOwned(request, expectedRevision: expectedRevision, ownedTimerEntryID: nil, instant: instant)
+        return try await createTaskOwned(
+            request, expectedRevision: expectedRevision, ownedTimerEntryID: nil,
+            instant: instant)
     }
 
-    func createTaskOwned(_ request: TaskCreationRequest, expectedRevision: Int64,
-                         ownedTimerEntryID: UUID?, instant: Int64?,
-                         checkpointAt: Int64? = nil) async throws -> TaskCreation {
+    func createTaskOwned(
+        _ request: TaskCreationRequest, expectedRevision: Int64,
+        ownedTimerEntryID: UUID?, instant: Int64?,
+        checkpointAt: Int64? = nil
+    ) async throws -> TaskCreation {
         try await acquire()
         defer { release() }
         guard request.start == (instant != nil),
-              checkpointAt == nil || (!request.start && request.budgetMinutes != nil) else {
+            checkpointAt == nil || (!request.start && request.budgetMinutes != nil)
+        else {
             throw TimerError.reviewRequired
         }
-        let committed = try await transactLocked(expectedRevision: expectedRevision,
-                                                 validationNow: instant ?? checkpointAt) { db, before in
-            try createMigratingTask(request, before: before, db: db,
+        let committed = try await transactLocked(
+            expectedRevision: expectedRevision,
+            validationNow: instant ?? checkpointAt
+        ) { database, before in
+            try createMigratingTask(
+                request, before: before, database: database,
                 ownedTimerEntryID: ownedTimerEntryID, instant: instant,
                 newEntryID: UUID(), checkpointAt: checkpointAt)
         }
         if let generic = committed.value.genericID, let parent = request.parentID {
-            migrationReceipt = MigrationReceipt(projectID: request.projectID, parentID: parent, genericID: generic,
-                                                requestedID: request.id, snapshot: committed.snapshot)
+            migrationReceipt = MigrationReceipt(
+                projectID: request.projectID, parentID: parent, genericID: generic,
+                requestedID: request.id, snapshot: committed.snapshot)
         }
-        return TaskCreation(snapshot: committed.snapshot, genericID: committed.value.genericID,
-                            movedEntryCount: committed.value.entries, movedPendingCount: committed.value.pending)
+        return TaskCreation(
+            snapshot: committed.snapshot, genericID: committed.value.genericID,
+            movedEntryCount: committed.value.entries, movedPendingCount: committed.value.pending)
     }
 
     public func migrationUndoAvailability() async throws -> MigrationUndoAvailability {
@@ -234,8 +261,8 @@ public actor Library {
         defer { release() }
         guard let receipt = migrationReceipt, receipt.id == receiptID else { throw CommandError.undoUnavailable }
         let current = try await currentStorage().snapshot()
-        let result = try await transactLocked(expectedRevision: current.revision) { db, before in
-            try receipt.undo(in: db, snapshot: before, ownedTimerEntryID: ownedTimerEntryID)
+        let result = try await transactLocked(expectedRevision: current.revision) { database, before in
+            try receipt.undo(in: database, snapshot: before, ownedTimerEntryID: ownedTimerEntryID)
         }
         migrationReceipt = nil
         return result.snapshot
@@ -246,7 +273,10 @@ public actor Library {
         if closeRequested {
             // Join the same FIFO tail rather than releasing ownership twice.
             await withCheckedContinuation { continuation in
-                if closed { continuation.resume(); return }
+                if closed {
+                    continuation.resume()
+                    return
+                }
                 closeJoiners.append(continuation)
             }
             return

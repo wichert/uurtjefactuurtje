@@ -1,6 +1,6 @@
-import SwiftUI
 import AppKit
 import LibraryStore
+import SwiftUI
 
 struct TimeReviewView: View {
     let presentation: TrackPresentation
@@ -47,7 +47,8 @@ struct TimeReviewView: View {
                         Picker("Review item", selection: $selectedPending) {
                             if interrupted { Text("Interrupted active entry").tag(UUID?.none) }
                             ForEach(pending) { row in
-                                let label = "\(presentation.path(row.taskID)) — "
+                                let label =
+                                    "\(presentation.path(row.taskID)) — "
                                     + EntryDisclosure.bound(row.sleepAt, zone: zone)
                                 Text(label).tag(Optional(row.id))
                             }
@@ -55,15 +56,16 @@ struct TimeReviewView: View {
                         if let row = pending.first(where: { $0.id == selectedPending }) {
                             Text(presentation.path(row.taskID)).textSelection(.enabled)
                             Text("Sleep: \(EntryDisclosure.bound(row.sleepAt, zone: zone))")
-                            Text(row.wakeAt.map { "Saved wake: \(EntryDisclosure.bound($0, zone: zone))" }
-                                 ?? "End unknown — enter an explicit end; nothing is inferred from now.")
+                            Text(
+                                row.wakeAt.map { "Saved wake: \(EntryDisclosure.bound($0, zone: zone))" }
+                                    ?? "End unknown — enter an explicit end; nothing is inferred from now.")
                             if row.wakeAt == nil { endFields }
                             HStack {
                                 Button("Review Include") { plan(skip: false) }
                                 Button("Review Skip", role: .destructive) { plan(skip: true) }
                             }
                         } else if interrupted, let active = model.snapshot?.activeTimer,
-                                  let entry = model.snapshot?.entries.first(where: { $0.id == active.entryID }) {
+                            let entry = model.snapshot?.entries.first(where: { $0.id == active.entryID }) {
                             EntryDisclosure(
                                 entry: entry,
                                 path: presentation.path(entry.taskID),
@@ -73,7 +75,8 @@ struct TimeReviewView: View {
                             let duration = EntryDisclosure.durationText(active.checkpointAt - entry.startAt)
                             Text("Durable checkpoint: \(checkpoint)")
                             Text("Checkpointed duration: \(duration)")
-                            Text("""
+                            Text(
+                                """
                                 Explicit discard removes this interrupted entry and all its checkpointed time; \
                                 nothing is saved and tracking stays stopped.
                                 """)
@@ -83,27 +86,33 @@ struct TimeReviewView: View {
                                 Button("Review explicit discard", role: .destructive) { plan(skip: true) }
                             }
                         } else {
-                            Text("No selected review item. Choose a pending interval,"
-                            + " or there is nothing to resolve.")
+                            Text(
+                                "No selected review item. Choose a pending interval,"
+                                    + " or there is nothing to resolve.")
                         }
-                        Text("""
-                        Native input can normalize dates or retain the previous value for an incomplete edit. \
-                        Review the resulting values before confirming.
-                        """)
+                        Text(
+                            """
+                            Native input can normalize dates or retain the previous value for an incomplete edit. \
+                            Review the resulting values before confirming.
+                            """)
                     } else {
-                        Text("""
-                        Review the resulting dates, times, occurrence offsets and affected entries. Confirm accepts \
-                        these values, including any native date normalization. Use Back to change them.
-                        """)
+                        Text(
+                            """
+                            Review the resulting dates, times, occurrence offsets and affected entries. \
+                            Confirm accepts these values, including any native date normalization. \
+                            Use Back to change them.
+                            """)
                     }
-                    Text("""
-                    Minute-level display. Unchanged saved boundaries retain exact stored precision; \
-                    newly entered ends use minute precision.
-                    """)
+                    Text(
+                        """
+                        Minute-level display. Unchanged saved boundaries retain exact stored precision; \
+                        newly entered ends use minute precision.
+                        """)
                     if let summary { Text(summary).textSelection(.enabled) }
                     if let inclusion { AdjustmentDisclosure(preview: inclusion, zone: zone) }
                     if stale {
-                        Text("""
+                        Text(
+                            """
                             Evidence changed or a submission failed. Use Back and Review again; \
                             old disclosure is retained.
                             """)
@@ -116,7 +125,12 @@ struct TimeReviewView: View {
             HStack {
                 Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
                 if command != nil {
-                    Button("Back") { command = nil; inclusion = nil; summary = nil; stale = false }
+                    Button("Back") {
+                        command = nil
+                        inclusion = nil
+                        summary = nil
+                        stale = false
+                    }
                     if inclusion?.runningConflict != nil, let stop = presentation.ownedStop {
                         Button("Stop, then review again") { presentation.timer(stop) { stale = true } }
                     }
@@ -127,8 +141,16 @@ struct TimeReviewView: View {
         }
         .disabled(presentation.acceptedWork)
         .padding().frame(minWidth: 580, idealHeight: 650)
-        .onAppear { selectedPending = interrupted ? nil : pending.first?.id; resetEnd() }
-        .onChange(of: selectedPending) { _, _ in command = nil; inclusion = nil; summary = nil; resetEnd() }
+        .onAppear {
+            selectedPending = interrupted ? nil : pending.first?.id
+            resetEnd()
+        }
+        .onChange(of: selectedPending) { _, _ in
+            command = nil
+            inclusion = nil
+            summary = nil
+            resetEnd()
+        }
         .onChange(of: end) { _, _ in if command != nil { stale = true } }
         .onChange(of: model.snapshot?.revision) { _, _ in if command != nil { stale = true } }
     }
@@ -154,7 +176,8 @@ struct TimeReviewView: View {
         }
     }
     private func resetEnd() {
-        end = nil; stale = false
+        end = nil
+        stale = false
         if selectedPending == nil, interrupted, let checkpoint = model.snapshot?.activeTimer?.checkpointAt {
             end = CorrectionForm.fields(
                 Date(timeIntervalSince1970: TimeInterval(checkpoint)),
@@ -179,7 +202,8 @@ struct TimeReviewView: View {
         let start = EntryDisclosure.bound(preview.entry.startAt, zone: zone)
         let checkpoint = EntryDisclosure.bound(preview.active.checkpointAt, zone: zone)
         let checkpointDuration = preview.active.checkpointAt - preview.entry.startAt
-        var text = "\(action) interrupted entry on \(preview.path.text). Never resume automatically. "
+        var text =
+            "\(action) interrupted entry on \(preview.path.text). Never resume automatically. "
             + "Start: \(start). Saved durable checkpoint: \(checkpoint). "
             + "Checkpointed duration: \(EntryDisclosure.durationText(checkpointDuration)). "
         guard let requestedEnd = preview.requestedEnd else {
@@ -206,12 +230,14 @@ struct TimeReviewView: View {
             if let row = pending.first(where: { $0.id == selectedPending }) {
                 if skip {
                     let preview = try SleepPlanner.skip(row, in: snapshot)
-                    command = .skip(preview); inclusion = nil
+                    command = .skip(preview)
+                    inclusion = nil
                     summary = skipSummary(preview, row: row)
                 } else {
                     let chosen = row.wakeAt == nil ? try end?.resolve(calendar: calendar) : nil
                     let preview = try SleepPlanner.include(row, endAt: chosen, in: snapshot)
-                    command = .include(preview); inclusion = preview.correction
+                    command = .include(preview)
+                    inclusion = preview.correction
                     summary = "Include pending interval: \(preview.path.text)"
                 }
             } else if interrupted {
@@ -221,12 +247,14 @@ struct TimeReviewView: View {
                 } else {
                     preview = try Self.saveAndStop(end: end, calendar: calendar, in: snapshot)
                 }
-                command = .resolveInterruption(preview); inclusion = preview.correction
+                command = .resolveInterruption(preview)
+                inclusion = preview.correction
                 summary = Self.interruptionSummary(preview, zone: zone)
             } else {
                 throw EditorError.invalid("Select a current review item.")
             }
-            stale = false; error = nil
+            stale = false
+            error = nil
         } catch {
             self.error = String(describing: error)
             stale = true
@@ -234,9 +262,10 @@ struct TimeReviewView: View {
     }
     private func skipSummary(_ preview: SleepSkipPreview, row: PendingSleepInterval) -> String {
         let sleep = EntryDisclosure.bound(row.sleepAt, zone: zone)
-        let wake = row.wakeAt.map {
-            "Saved wake: \(EntryDisclosure.bound($0, zone: zone))."
-        } ?? "End remains unknown."
+        let wake =
+            row.wakeAt.map {
+                "Saved wake: \(EntryDisclosure.bound($0, zone: zone))."
+            } ?? "End remains unknown."
         return "Skip unbilled interval on \(preview.path.text); no time will be added. "
             + "Sleep: \(sleep). " + wake
     }
@@ -249,8 +278,11 @@ struct TimeReviewView: View {
                 _ = try await result.value
                 // Keep this one sheet open; refresh rows only from the published success.
                 presentation.completeReview(token)
-                self.command = nil; inclusion = nil; summary = nil
-                selectedPending = interrupted ? nil : pending.first?.id; resetEnd()
+                self.command = nil
+                inclusion = nil
+                summary = nil
+                selectedPending = interrupted ? nil : pending.first?.id
+                resetEnd()
             } catch {
                 self.error = String(describing: error)
                 stale = true
@@ -271,7 +303,8 @@ extension TimeReviewView {
         }
         let preview = try SleepPlanner.interruption(endAt: chosen, in: snapshot)
         guard chosen > preview.entry.startAt else {
-            throw EditorError.invalid("""
+            throw EditorError.invalid(
+                """
                 Save & Stop requires an end after Start. Use explicit discard to remove \
                 the interrupted entry and its checkpointed time.
                 """)

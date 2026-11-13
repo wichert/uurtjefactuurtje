@@ -39,13 +39,15 @@ import SwiftUI
 
     var body: some Commands {
         // Commands exist even without a workspace view; never install from onAppear.
-        let _: Void = host.installSceneActions(workspace: {
-            openWindow(id: "workspace")
-            NSApp.activate(ignoringOtherApps: true)
-        }, settings: {
-            openSettings()
-            NSApp.activate(ignoringOtherApps: true)
-        })
+        let _: Void = host.installSceneActions(
+            workspace: {
+                openWindow(id: "workspace")
+                NSApp.activate(ignoringOtherApps: true)
+            },
+            settings: {
+                openSettings()
+                NSApp.activate(ignoringOtherApps: true)
+            })
         CommandGroup(after: .windowArrangement) {
             Button("Open Track") {
                 host.openTrack()

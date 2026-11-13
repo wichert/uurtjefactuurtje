@@ -1,6 +1,6 @@
-import SwiftUI
 import Charts
 import LibraryStore
+import SwiftUI
 
 private struct WeekSegment: Identifiable {
     let day: Int
@@ -25,9 +25,14 @@ private struct WeekSegment: Identifiable {
                 Button("Previous week") { move(-1) }
                 Button("This week") { reports.showThisWeek() }
                 Button("Next week") { move(1) }
-                Picker("Open project", selection: Binding<UUID?>(get: { nil }, set: { id in
-                    if let id { reports.openProject(id) }
-                })) {
+                Picker(
+                    "Open project",
+                    selection: Binding<UUID?>(
+                        get: { nil },
+                        set: { id in
+                            if let id { reports.openProject(id) }
+                        })
+                ) {
                     Text("Choose project").tag(UUID?.none)
                     ForEach(reports.visibleProjects) { project in
                         Text(project.name + (project.isArchived ? " (archived)" : "")).tag(Optional(project.id))
@@ -57,16 +62,19 @@ private struct WeekSegment: Identifiable {
                     }
                 }
                 Chart(segments) { segment in
-                    BarMark(x: .value("Day", Double(segment.day)),
-                            yStart: .value("From hours", segment.lowerHours),
-                            yEnd: .value("To hours", segment.upperHours))
-                        .foregroundStyle(by: .value("Project", segment.series))
-                        .accessibilityLabel(
-                            "\(segment.series), " + ReportFormatting.day(
+                    BarMark(
+                        x: .value("Day", Double(segment.day)),
+                        yStart: .value("From hours", segment.lowerHours),
+                        yEnd: .value("To hours", segment.upperHours)
+                    )
+                    .foregroundStyle(by: .value("Project", segment.series))
+                    .accessibilityLabel(
+                        "\(segment.series), "
+                            + ReportFormatting.day(
                                 week.days[segment.day].date, calendar: reports.calendar,
                             )
-                        )
-                        .accessibilityValue(ReportFormatting.duration(seconds: segment.seconds))
+                    )
+                    .accessibilityValue(ReportFormatting.duration(seconds: segment.seconds))
                 }
                 .chartXScale(domain: -0.5...6.5)
                 .chartOverlay { proxy in
@@ -76,18 +84,19 @@ private struct WeekSegment: Identifiable {
                             Rectangle().fill(.clear).contentShape(Rectangle())
                                 .onContinuousHover { phase in
                                     switch phase {
-                                    case let .active(point): hoveredSegment = hitActive(point, frame, proxy, segments)
+                                    case .active(let point): hoveredSegment = hitActive(point, frame, proxy, segments)
                                     case .ended: hoveredSegment = nil
                                     }
                                 }
-                                .gesture(SpatialTapGesture().onEnded { event in
-                                    if let segment = hit(
-                                        event.location, frame: frame, proxy: proxy, segments: segments
-                                    ),
-                                       week.days.indices.contains(segment.day) {
-                                        reports.openDay(projectID: segment.project.id, day: week.days[segment.day])
-                                    }
-                                })
+                                .gesture(
+                                    SpatialTapGesture().onEnded { event in
+                                        if let segment = hit(
+                                            event.location, frame: frame, proxy: proxy, segments: segments
+                                        ),
+                                            week.days.indices.contains(segment.day) {
+                                            reports.openDay(projectID: segment.project.id, day: week.days[segment.day])
+                                        }
+                                    })
                         }
                     }
                 }
@@ -114,11 +123,13 @@ private struct WeekSegment: Identifiable {
                         }
                     }
                 }
-                Text("""
-                Amounts use current project rates, grouped by currency; no conversion. \
-                Chart hours are geometry only.
-                """)
-                    .font(.caption)
+                Text(
+                    """
+                    Amounts use current project rates, grouped by currency; no conversion. \
+                    Chart hours are geometry only.
+                    """
+                )
+                .font(.caption)
             }
         }
     }
@@ -154,8 +165,9 @@ private struct WeekSegment: Identifiable {
 
     private func hit(_ point: CGPoint, frame: CGRect, proxy: ChartProxy, segments: [WeekSegment]) -> WeekSegment? {
         guard frame.contains(point),
-              let horizontal: Double = proxy.value(atX: point.x - frame.minX),
-              let vertical: Double = proxy.value(atY: point.y - frame.minY) else { return nil }
+            let horizontal: Double = proxy.value(atX: point.x - frame.minX),
+            let vertical: Double = proxy.value(atY: point.y - frame.minY)
+        else { return nil }
         let day = Int(horizontal.rounded())
         guard abs(horizontal - Double(day)) <= 0.5 else { return nil }
         return segments.first {

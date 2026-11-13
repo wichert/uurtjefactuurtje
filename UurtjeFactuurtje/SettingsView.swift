@@ -1,5 +1,5 @@
-import SwiftUI
 import LibraryStore
+import SwiftUI
 
 @MainActor
 struct SettingsView: View {
@@ -16,10 +16,13 @@ struct SettingsView: View {
         Form {
             Section("Reports") {
                 if let weekday = model.firstWeekday {
-                    Picker("Week starts on", selection: Binding(
-                        get: { model.firstWeekday ?? weekday },
-                        set: save
-                    )) {
+                    Picker(
+                        "Week starts on",
+                        selection: Binding(
+                            get: { model.firstWeekday ?? weekday },
+                            set: save
+                        )
+                    ) {
                         ForEach(1...7, id: \.self) { day in
                             Text(Calendar.current.standaloneWeekdaySymbols[day - 1]).tag(day)
                         }
@@ -30,12 +33,14 @@ struct SettingsView: View {
                     LabeledContent("Week starts on", value: "Unavailable")
                         .accessibilityLabel("Week starts on, unavailable")
                 }
-                Text("""
+                Text(
+                    """
                     Applies to weekly reports and each project's This week period. \
                     Dates and times use your Mac's time zone.
-                    """)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    """
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
                 if isSaving {
                     ProgressView("Saving week preference…")
                         .accessibilityLabel("Saving week preference")
@@ -53,7 +58,8 @@ struct SettingsView: View {
                 Text("Hourly rates and currencies belong to each project. Reports do not convert between currencies.")
             }
             Section("Warnings") {
-                Text("""
+                Text(
+                    """
                     In-app budget warnings work without notification permission. Manage macOS notifications \
                     and Focus in System Settings; those settings can silence external notifications.
                     """)
@@ -66,7 +72,8 @@ struct SettingsView: View {
 
     private func save(_ weekday: Int) {
         guard !isSaving, !model.isBusy, available,
-              model.firstWeekday != nil, weekday != model.firstWeekday else { return }
+            model.firstWeekday != nil, weekday != model.firstWeekday
+        else { return }
         guard let accepted = host.submitFirstWeekday(weekday) else { return }
         isSaving = true
         saveError = nil

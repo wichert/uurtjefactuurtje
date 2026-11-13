@@ -1,0 +1,30 @@
+excluded:
+  - .build
+  - .rpiv
+  - .swiftpm
+disabled_rules:
+  - trailing_comma
+
+# These workflows and schema definitions are intentionally kept together.
+file_length:
+  warning: 2100
+  error: 3000
+  ignore_comment_only_lines: true
+type_body_length:
+  warning: 700
+  error: 1100
+function_body_length:
+  warning: 150
+  error: 200
+cyclomatic_complexity:
+  warning: 35
+  error: 50
+function_parameter_count:
+  warning: 8
+  error: 10
+large_tuple:
+  warning: 6
+  error: 8
+line_length:
+  warning: 120
+  error: 180

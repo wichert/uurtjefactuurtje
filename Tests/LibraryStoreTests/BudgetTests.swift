@@ -1,27 +1,36 @@
 import Foundation
 import SQLite3
 import Testing
+
 @testable import LibraryStore
 
 @Suite struct BudgetTests {
     private let locale = Locale(identifier: "en_US")
 
-    private func snapshot(tasks: [TaskRecord], entries: [TimeEntry] = [], timer: ActiveTimer? = nil,
-                          pending: [PendingSleepInterval] = []) -> LibrarySnapshot {
-        LibrarySnapshot(schemaVersion: 2, revision: 0,
+    private func snapshot(
+        tasks: [TaskRecord], entries: [TimeEntry] = [], timer: ActiveTimer? = nil,
+        pending: [PendingSleepInterval] = []
+    ) -> LibrarySnapshot {
+        LibrarySnapshot(
+            schemaVersion: 2, revision: 0,
             projects: [Project(id: budgetProjectID, name: "Client", hourlyRate: 1, currencyCode: "EUR")],
             tasks: tasks, entries: entries, activeTimer: timer, pendingSleepIntervals: pending)
     }
 
-    private func task(_ id: UUID = UUID(), parent: UUID? = nil, budget: Int64? = nil,
-                      band: WarningThreshold = .none) -> TaskRecord {
-        TaskRecord(id: id, projectID: budgetProjectID, parentTaskID: parent,
-                   name: id.uuidString, budgetMinutes: budget, lastWarnedThreshold: band)
+    private func task(
+        _ id: UUID = UUID(), parent: UUID? = nil, budget: Int64? = nil,
+        band: WarningThreshold = .none
+    ) -> TaskRecord {
+        TaskRecord(
+            id: id, projectID: budgetProjectID, parentTaskID: parent,
+            name: id.uuidString, budgetMinutes: budget, lastWarnedThreshold: band)
     }
 
     @Test func exactLocalizedHoursAndUnchangedDisplay() {
-        for text in ["", "0", "-1", "+1", "1e2", "NaN", "1x", "1,000", "1.", "1.1.1",
-                     "0.0001", "0.0025", "153722867280912931", "0.0166666666666666666666666666666666666667"] {
+        for text in [
+            "", "0", "-1", "+1", "1e2", "NaN", "1x", "1,000", "1.", "1.1.1",
+            "0.0001", "0.0025", "153722867280912931", "0.0166666666666666666666666666666666666667"
+        ] {
             #expect(BudgetInput.parseHours(text, locale: locale) == nil)
         }
         #expect(BudgetInput.parseHours(" 1.25 ", locale: locale) == 75)
@@ -34,57 +43,88 @@ import Testing
         #expect(BudgetInput.parseHours("0001.2500000000000000000000000000000000000000", locale: locale) == 75)
         let original: Int64 = 1
         let displayed = BudgetInput.text(original, locale: locale)
-        let submitted = displayed == BudgetInput.text(original, locale: locale)
+        let submitted =
+            displayed == BudgetInput.text(original, locale: locale)
             ? original : BudgetInput.parseHours(displayed, locale: locale)
         #expect(submitted == 1)
         #expect(BudgetInput.text(75, locale: Locale(identifier: "nl_NL")) == "1,25")
     }
 
     @Test func nearestFrontiersEqualityAndEditedSubtreeAllowance() throws {
-        let root = UUID(), bridge = UUID(), child = UUID(), grandchild = UUID(), sibling = UUID()
-        let rows = [task(root, budget: 100), task(bridge, parent: root),
-                    task(child, parent: bridge, budget: 60), task(grandchild, parent: child, budget: 40),
-                    task(sibling, parent: root, budget: 40)]
+        let root = UUID()
+        let bridge = UUID()
+        let child = UUID()
+        let grandchild = UUID()
+        let sibling = UUID()
+        let rows = [
+            task(root, budget: 100), task(bridge, parent: root),
+            task(child, parent: bridge, budget: 60), task(grandchild, parent: child, budget: 40),
+            task(sibling, parent: root, budget: 40)
+        ]
         let value = snapshot(tasks: rows)
         let allocations = try BudgetRules.allocations(in: value)
         #expect(allocations.first { $0.taskID == root }?.allocatedMinutes == 100)
         #expect(allocations.first { $0.taskID == child }?.allocatedMinutes == 40)
         #expect(!SnapshotValidator.violations(in: value).contains { $0.code == .allocation })
-        let allowance = try BudgetRules.allowance(in: value, projectID: budgetProjectID,
-                                                 parentTaskID: bridge, editingTaskID: child)
+        let allowance = try BudgetRules.allowance(
+            in: value, projectID: budgetProjectID,
+            parentTaskID: bridge, editingTaskID: child)
         #expect(allowance.limitingAncestorID == root)
         #expect(allowance.maximumMinutes == 60)
         #expect(allowance.minimumMinutes == 40)
-        let intermediate = try BudgetRules.allowance(in: value, projectID: budgetProjectID,
-                                                    parentTaskID: root, editingTaskID: bridge)
+        let intermediate = try BudgetRules.allowance(
+            in: value, projectID: budgetProjectID,
+            parentTaskID: root, editingTaskID: bridge)
         #expect(intermediate.maximumMinutes == 60)
         #expect(intermediate.minimumMinutes == 60)
-        let fresh = try BudgetRules.allowance(in: value, projectID: budgetProjectID,
-                                             parentTaskID: bridge, editingTaskID: nil)
+        let fresh = try BudgetRules.allowance(
+            in: value, projectID: budgetProjectID,
+            parentTaskID: bridge, editingTaskID: nil)
         #expect(fresh.maximumMinutes == 0)
         let lowered = snapshot(tasks: rows.map { $0.id == root ? task(root, budget: 99) : $0 })
         #expect(SnapshotValidator.violations(in: lowered).contains { $0.code == .allocation && $0.recordID == root })
-        let removable = snapshot(tasks: [task(root, budget: 100), task(child, parent: root, budget: 60),
-                                         task(grandchild, parent: child, budget: 60), task(sibling, parent: root, budget: 40)])
+        let removable = snapshot(tasks: [
+            task(root, budget: 100), task(child, parent: root, budget: 60),
+            task(grandchild, parent: child, budget: 60),
+            task(
+                sibling, parent: root,
+                budget: 40)
+        ])
         #expect(!SnapshotValidator.violations(in: removable).contains { $0.code == .allocation })
-        let removed = snapshot(tasks: [task(root, budget: 100), task(child, parent: root),
-                                      task(grandchild, parent: child, budget: 60), task(sibling, parent: root, budget: 40)])
+        let removed = snapshot(tasks: [
+            task(root, budget: 100), task(child, parent: root),
+            task(grandchild, parent: child, budget: 60),
+            task(
+                sibling, parent: root,
+                budget: 40)
+        ])
         #expect(try BudgetRules.allocations(in: removed).first { $0.taskID == root }?.allocatedMinutes == 100)
         #expect(!SnapshotValidator.violations(in: removed).contains { $0.code == .allocation })
-        let huge = snapshot(tasks: [task(root, budget: .max), task(child, parent: root, budget: .max),
-                                   task(sibling, parent: root, budget: .max)])
-        #expect(try BudgetRules.allocations(in: huge).first { $0.taskID == root }?.allocatedMinutes == Decimal(Int64.max) * 2)
+        let huge = snapshot(tasks: [
+            task(root, budget: .max), task(child, parent: root, budget: .max),
+            task(sibling, parent: root, budget: .max)
+        ])
+        #expect(
+            try BudgetRules.allocations(in: huge).first { $0.taskID == root }?.allocatedMinutes == Decimal(Int64.max)
+                * 2)
     }
 
     @Test func lifetimeRollupCheckpointZeroAndPendingExclusion() throws {
-        let root = UUID(), bridge = UUID(), leaf = UUID(), other = UUID(), openID = UUID()
+        let root = UUID()
+        let bridge = UUID()
+        let leaf = UUID()
+        let other = UUID()
+        let openID = UUID()
         let rows = [task(root), task(bridge, parent: root), task(leaf, parent: bridge), task(other, parent: root)]
-        let entries = [TimeEntry(id: UUID(), taskID: leaf, startAt: -1000, endAt: -900),
-                       TimeEntry(id: UUID(), taskID: other, startAt: -800, endAt: -780),
-                       TimeEntry(id: openID, taskID: leaf, startAt: 0, endAt: nil)]
+        let entries = [
+            TimeEntry(id: UUID(), taskID: leaf, startAt: -1000, endAt: -900),
+            TimeEntry(id: UUID(), taskID: other, startAt: -800, endAt: -780),
+            TimeEntry(id: openID, taskID: leaf, startAt: 0, endAt: nil)
+        ]
         let pending = [PendingSleepInterval(id: UUID(), taskID: leaf, sleepAt: -500, wakeAt: -400)]
-        let value = snapshot(tasks: rows, entries: entries,
-                             timer: ActiveTimer(entryID: openID, checkpointAt: 30), pending: pending)
+        let value = snapshot(
+            tasks: rows, entries: entries,
+            timer: ActiveTimer(entryID: openID, checkpointAt: 30), pending: pending)
         let totals = try BudgetRules.usage(in: value)
         #expect(totals[leaf] == 130)
         #expect(totals[bridge] == 130)
@@ -108,20 +148,43 @@ import Testing
         #expect(BudgetRules.band(used: eighty, budget: .max) == .eighty)
         #expect(BudgetRules.band(used: maximum - 1, budget: .max) == .eighty)
         #expect(BudgetRules.band(used: maximum, budget: .max) == .hundred)
-        let a = UUID(), b = UUID(), entryID = UUID()
-        let values = [snapshot(tasks: [task(a, parent: b), task(b, parent: a)]),
-                      snapshot(tasks: [task(a), task(a)]), snapshot(tasks: [task(a, parent: b)]),
-                      snapshot(tasks: [task(a)], entries: [TimeEntry(id: entryID, taskID: a, startAt: 5, endAt: 4)]),
-                      snapshot(tasks: [task(a)], entries: [TimeEntry(id: entryID, taskID: a, startAt: .min, endAt: .max)]),
-                      snapshot(tasks: [task(a)], entries: [TimeEntry(id: entryID, taskID: a, startAt: 0, endAt: nil)]),
-                      snapshot(tasks: [task(a), task(b, parent: a)],
-                               entries: [TimeEntry(id: entryID, taskID: a, startAt: 0, endAt: 1)])]
+        let timer = UUID()
+        let right = UUID()
+        let entryID = UUID()
+        let values = [
+            snapshot(tasks: [task(timer, parent: right), task(right, parent: timer)]),
+            snapshot(tasks: [task(timer), task(timer)]), snapshot(tasks: [task(timer, parent: right)]),
+            snapshot(
+                tasks: [task(timer)],
+                entries: [
+                    TimeEntry(
+                        id: entryID, taskID: timer, startAt: 5,
+                        endAt: 4)
+                ]),
+            snapshot(
+                tasks: [task(timer)],
+                entries: [
+                    TimeEntry(
+                        id: entryID, taskID: timer, startAt: .min,
+                        endAt: .max)
+                ]),
+            snapshot(
+                tasks: [task(timer)],
+                entries: [
+                    TimeEntry(
+                        id: entryID, taskID: timer, startAt: 0,
+                        endAt: nil)
+                ]),
+            snapshot(
+                tasks: [task(timer), task(right, parent: timer)],
+                entries: [TimeEntry(id: entryID, taskID: timer, startAt: 0, endAt: 1)])
+        ]
         for value in values {
             #expect(throws: LibraryError.self) { try BudgetRules.allocations(in: value) }
             #expect(throws: LibraryError.self) { try BudgetRules.usage(in: value) }
         }
-        let incoherent = snapshot(tasks: [task(a, budget: 100, band: .hundred)])
-        #expect(SnapshotValidator.violations(in: incoherent) == [Violation(.warning, a)])
+        let incoherent = snapshot(tasks: [task(timer, budget: 100, band: .hundred)])
+        #expect(SnapshotValidator.violations(in: incoherent) == [Violation(.warning, timer)])
         #expect(throws: LibraryError.self) { try SnapshotValidator.validate(incoherent) }
     }
 }
@@ -136,24 +199,33 @@ extension BudgetTests {
         let url = directory.appendingPathComponent("budget.sqlite")
         try Storage.createPrivateDatabase(at: url)
         let store = try Storage(privateDatabaseAt: url)
-        let root = UUID(), leaf = UUID(), entry = UUID()
+        let root = UUID()
+        let leaf = UUID()
+        let entry = UUID()
         let key: @Sendable (UUID) -> SQLValue = { .text($0.uuidString.lowercased()) }
-        let first = try await store.transact(expectedRevision: 0) { db, _ in
-            try db.runCommand("INSERT INTO projects(id,name,hourly_rate,currency_code) VALUES (?,?,?,?)",
+        let first = try await store.transact(expectedRevision: 0) { database, _ in
+            try database.runCommand(
+                "INSERT INTO projects(id,name,hourly_rate,currency_code) VALUES (?,?,?,?)",
                 bindings: [key(budgetProjectID), .text("Client"), .text("1"), .text("EUR")], expectedChanges: 1)
-            try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name,budget_minutes) VALUES (?,?,NULL,?,?)",
+            try database.runCommand(
+                "INSERT INTO tasks(id,project_id,parent_task_id,name,budget_minutes) VALUES (?,?,NULL,?,?)",
                 bindings: [key(root), key(budgetProjectID), .text("Root"), .integer(100)], expectedChanges: 1)
-            try db.runCommand("INSERT INTO tasks(id,project_id,parent_task_id,name,budget_minutes) VALUES (?,?,?,?,?)",
-                bindings: [key(leaf), key(budgetProjectID), key(root), .text("Leaf"), .integer(100)], expectedChanges: 1)
-            try db.runCommand("INSERT INTO time_entries(id,task_id,start_at,end_at) VALUES (?,?,0,NULL)",
+            try database.runCommand(
+                "INSERT INTO tasks(id,project_id,parent_task_id,name,budget_minutes) VALUES (?,?,?,?,?)",
+                bindings: [key(leaf), key(budgetProjectID), key(root), .text("Leaf"), .integer(100)],
+                expectedChanges: 1)
+            try database.runCommand(
+                "INSERT INTO time_entries(id,task_id,start_at,end_at) VALUES (?,?,0,NULL)",
                 bindings: [key(entry), key(leaf)], expectedChanges: 1)
-            try db.runCommand("INSERT INTO active_timer(id,entry_id,checkpoint_at) VALUES (1,?,0)",
+            try database.runCommand(
+                "INSERT INTO active_timer(id,entry_id,checkpoint_at) VALUES (1,?,0)",
                 bindings: [key(entry)], expectedChanges: 1)
         }.snapshot
         #expect(first.revision == 1)
-        let crossed = try await store.transact(expectedRevision: 1) { db, before in
-            try TimerTransition.checkpoint(before: before, entryID: entry, instant: 4800, to: db)
-            try db.runCommand("UPDATE tasks SET name=?,budget_minutes=? WHERE id=?",
+        let crossed = try await store.transact(expectedRevision: 1) { database, before in
+            try TimerTransition.checkpoint(before: before, entryID: entry, instant: 4800, to: database)
+            try database.runCommand(
+                "UPDATE tasks SET name=?,budget_minutes=? WHERE id=?",
                 bindings: [.text("Renamed"), .integer(80), key(leaf)], expectedChanges: 1)
         }.snapshot
         #expect(crossed.revision == 2)
@@ -162,36 +234,42 @@ extension BudgetTests {
         #expect(crossed.tasks.first { $0.id == leaf }?.lastWarnedThreshold == .hundred)
         for fault in [CommitFault.beforeCommit, .commitRejected] {
             do {
-                _ = try await store.transact(expectedRevision: 2, fault: fault) { db, _ in
-                    try db.runCommand("UPDATE tasks SET name='Unpublished' WHERE id=?", bindings: [key(leaf)], expectedChanges: 1)
+                _ = try await store.transact(expectedRevision: 2, fault: fault) { database, _ in
+                    try database.runCommand(
+                        "UPDATE tasks SET name='Unpublished' WHERE id=?", bindings: [key(leaf)], expectedChanges: 1)
                 }
                 Issue.record("fault unexpectedly succeeded")
-            } catch { }
+            } catch {}
             #expect(try await store.snapshot() == crossed)
         }
         do {
-            _ = try await store.transact(expectedRevision: 2) { db, before in
-                try TimerTransition.checkpoint(before: before, entryID: entry, instant: 5400, to: db)
-                try db.runCommand("UPDATE tasks SET name='Invalid',budget_minutes=101 WHERE id=?",
+            _ = try await store.transact(expectedRevision: 2) { database, before in
+                try TimerTransition.checkpoint(before: before, entryID: entry, instant: 5400, to: database)
+                try database.runCommand(
+                    "UPDATE tasks SET name='Invalid',budget_minutes=101 WHERE id=?",
                     bindings: [key(leaf)], expectedChanges: 1)
             }
             Issue.record("allocation unexpectedly succeeded")
         } catch LibraryError.invalid(let errors) { #expect(errors.contains { $0.code == .allocation }) }
         #expect(try await store.snapshot() == crossed)
-        let rearmed = try await store.transact(expectedRevision: 2) { db, _ in
-            try db.runCommand("UPDATE tasks SET budget_minutes=200 WHERE id=?", bindings: [key(root)], expectedChanges: 1)
-            try db.runCommand("UPDATE tasks SET budget_minutes=NULL WHERE id=?", bindings: [key(leaf)], expectedChanges: 1)
+        let rearmed = try await store.transact(expectedRevision: 2) { database, _ in
+            try database.runCommand(
+                "UPDATE tasks SET budget_minutes=200 WHERE id=?", bindings: [key(root)], expectedChanges: 1)
+            try database.runCommand(
+                "UPDATE tasks SET budget_minutes=NULL WHERE id=?", bindings: [key(leaf)], expectedChanges: 1)
         }.snapshot
         #expect(rearmed.tasks.allSatisfy { $0.lastWarnedThreshold == .none })
-        let overrun = try await store.transact(expectedRevision: 3) { db, before in
-            try TimerTransition.checkpoint(before: before, entryID: entry, instant: 15000, to: db)
+        let overrun = try await store.transact(expectedRevision: 3) { database, before in
+            try TimerTransition.checkpoint(before: before, entryID: entry, instant: 15000, to: database)
         }.snapshot
         #expect(overrun.activeTimer?.checkpointAt == 15000)
         #expect(overrun.tasks.first { $0.id == root }?.lastWarnedThreshold == .hundred)
-        let corrected = try await store.transact(expectedRevision: 4) { db, _ in
-            try db.runCommand("DELETE FROM active_timer WHERE id=1", bindings: [], expectedChanges: 1)
-            try db.runCommand("UPDATE time_entries SET end_at=1200 WHERE id=?", bindings: [key(entry)], expectedChanges: 1)
-            try db.runCommand("UPDATE tasks SET parent_task_id=NULL WHERE id=?", bindings: [key(leaf)], expectedChanges: 1)
+        let corrected = try await store.transact(expectedRevision: 4) { database, _ in
+            try database.runCommand("DELETE FROM active_timer WHERE id=1", bindings: [], expectedChanges: 1)
+            try database.runCommand(
+                "UPDATE time_entries SET end_at=1200 WHERE id=?", bindings: [key(entry)], expectedChanges: 1)
+            try database.runCommand(
+                "UPDATE tasks SET parent_task_id=NULL WHERE id=?", bindings: [key(leaf)], expectedChanges: 1)
         }.snapshot
         #expect(corrected.tasks.allSatisfy { $0.lastWarnedThreshold == .none })
         await store.close()
@@ -203,7 +281,8 @@ extension BudgetTests {
             let result = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE, nil)
             guard result == SQLITE_OK, let database else { throw StorageError.sqlite(result, "open") }
             defer { sqlite3_close_v2(database) }
-            let update = sqlite3_exec(database,
+            let update = sqlite3_exec(
+                database,
                 "UPDATE tasks SET last_warned_threshold=100 WHERE id='\(root.uuidString.lowercased())'", nil, nil, nil)
             guard update == SQLITE_OK else {
                 throw StorageError.sqlite(update, String(cString: sqlite3_errmsg(database)))

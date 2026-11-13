@@ -6,7 +6,8 @@ public enum BudgetInput {
         let parts = text.trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: separator)
         guard (1...2).contains(parts.count), !parts.last!.isEmpty,
-              parts.allSatisfy({ $0.utf8.allSatisfy { (48...57).contains($0) } }) else { return nil }
+            parts.allSatisfy({ $0.utf8.allSatisfy { (48...57).contains($0) } })
+        else { return nil }
         let digits = parts.joined()
         guard !digits.isEmpty else { return nil }
         // Multiply digit-by-digit: Decimal parsing can silently round a long input.
@@ -17,7 +18,10 @@ public enum BudgetInput {
             product.append(UInt8(value % 10))
             carry = value / 10
         }
-        while carry > 0 { product.append(UInt8(carry % 10)); carry /= 10 }
+        while carry > 0 {
+            product.append(UInt8(carry % 10))
+            carry /= 10
+        }
         let scale = parts.count == 2 ? parts[1].utf8.count : 0
         guard product.prefix(scale).allSatisfy({ $0 == 0 }) else { return nil }
         let whole = product.dropFirst(scale).reversed().map { Character(String($0)) }
@@ -67,9 +71,10 @@ public enum BudgetRules {
             let errors = SnapshotValidator.violations(in: snapshot, now: nil, includingBudgets: false)
             guard errors.isEmpty else { throw LibraryError.invalid(errors) }
             tasks = Dictionary(uniqueKeysWithValues: snapshot.tasks.map { ($0.id, $0) })
-            let children = Dictionary(grouping: snapshot.tasks.compactMap { task in
-                task.parentTaskID.map { (parent: $0, child: task.id) }
-            }, by: \.parent)
+            let children = Dictionary(
+                grouping: snapshot.tasks.compactMap { task in
+                    task.parentTaskID.map { (parent: $0, child: task.id) }
+                }, by: \.parent)
             var remaining = children.mapValues(\.count)
             var order = snapshot.tasks.filter { children[$0.id] == nil }.map(\.id)
             var sums: [UUID: Decimal] = [:]
@@ -93,17 +98,21 @@ public enum BudgetRules {
         let tree = try Tree(snapshot)
         return snapshot.tasks.sorted { $0.id.uuidString < $1.id.uuidString }.compactMap { task in
             task.budgetMinutes.map {
-                BudgetAllocation(taskID: task.id, limitMinutes: $0,
-                                 allocatedMinutes: tree.frontier[task.id, default: 0])
+                BudgetAllocation(
+                    taskID: task.id, limitMinutes: $0,
+                    allocatedMinutes: tree.frontier[task.id, default: 0])
             }
         }
     }
 
-    public static func allowance(in snapshot: LibrarySnapshot, projectID: UUID,
-                                 parentTaskID: UUID?, editingTaskID: UUID?) throws -> BudgetAllowance {
+    public static func allowance(
+        in snapshot: LibrarySnapshot, projectID: UUID,
+        parentTaskID: UUID?, editingTaskID: UUID?
+    ) throws -> BudgetAllowance {
         let tree = try Tree(snapshot)
         guard snapshot.projects.contains(where: { $0.id == projectID }),
-              parentTaskID == nil || tree.tasks[parentTaskID!]?.projectID == projectID else {
+            parentTaskID == nil || tree.tasks[parentTaskID!]?.projectID == projectID
+        else {
             throw LibraryError.invalid([Violation(.hierarchy, editingTaskID)])
         }
         let edited = editingTaskID.flatMap { tree.tasks[$0] }
@@ -117,7 +126,8 @@ public enum BudgetRules {
         var cursor = parentTaskID
         while let id = cursor, let ancestor = tree.tasks[id] {
             if let limit = ancestor.budgetMinutes {
-                return BudgetAllowance(limitingAncestorID: id,
+                return BudgetAllowance(
+                    limitingAncestorID: id,
                     maximumMinutes: Decimal(limit) - tree.frontier[id, default: 0] + oldContribution,
                     minimumMinutes: minimum)
             }
@@ -131,8 +141,9 @@ public enum BudgetRules {
         var totals = Dictionary(uniqueKeysWithValues: snapshot.tasks.map { ($0.id, Decimal.zero) })
         for entry in snapshot.entries {
             let end: Int64
-            if let closedEnd = entry.endAt { end = closedEnd }
-            else {
+            if let closedEnd = entry.endAt {
+                end = closedEnd
+            } else {
                 guard let active = snapshot.activeTimer, active.entryID == entry.id else {
                     throw LibraryError.invalid([Violation(.timer, entry.id)])
                 }

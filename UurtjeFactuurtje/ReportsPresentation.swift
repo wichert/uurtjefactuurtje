@@ -1,6 +1,6 @@
 import Foundation
-import Observation
 import LibraryStore
+import Observation
 
 enum ReportMode: String, CaseIterable { case week, project }
 
@@ -54,10 +54,12 @@ struct WeekReturnContext {
 
     func openProject(_ projectID: UUID, scopeTaskID: UUID? = nil) {
         guard let snapshot = track.workspace.snapshot,
-              snapshot.projects.contains(where: { $0.id == projectID }),
-              scopeTaskID == nil || snapshot.tasks.contains(where: {
-                  $0.id == scopeTaskID && $0.projectID == projectID
-              }) else { return }
+            snapshot.projects.contains(where: { $0.id == projectID }),
+            scopeTaskID == nil
+                || snapshot.tasks.contains(where: {
+                    $0.id == scopeTaskID && $0.projectID == projectID
+                })
+        else { return }
         if mode == .week {
             returnToWeek = WeekReturnContext(anchor: weekAnchor, includeArchived: includeArchived)
         }
@@ -106,14 +108,16 @@ struct WeekReturnContext {
     }
 
     func weeklyReport(now: Int64, calendar: Calendar, firstWeekday: Int) throws -> WeeklyReport {
-        try track.workspace.weeklyReport(containing: weekAnchor ?? now, calendar: calendar,
-                                         firstWeekday: firstWeekday, includeArchived: includeArchived)
+        try track.workspace.weeklyReport(
+            containing: weekAnchor ?? now, calendar: calendar,
+            firstWeekday: firstWeekday, includeArchived: includeArchived)
     }
 
     func projectReport(calendar: Calendar, firstWeekday: Int) throws -> ProjectReport? {
         guard let id = selectedProjectID else { return nil }
-        return try track.workspace.projectReport(id, period: period, calendar: calendar,
-                                                 firstWeekday: firstWeekday, scopeTaskID: scopeTaskID)
+        return try track.workspace.projectReport(
+            id, period: period, calendar: calendar,
+            firstWeekday: firstWeekday, scopeTaskID: scopeTaskID)
     }
 
     private func clearResults() {
@@ -129,7 +133,8 @@ struct WeekReturnContext {
         self.calendar = calendar
         error = nil
         guard track.workspace.availability == .ready || track.workspace.availability == .reviewRequired,
-              track.workspace.snapshot != nil else {
+            track.workspace.snapshot != nil
+        else {
             clearResults()
             error = "Library unavailable. Open or recover the library to view reports."
             return
@@ -216,13 +221,13 @@ struct WeekReturnContext {
         let ids = Set(value.tasks.map(\.id))
         expandedTaskIDs.formIntersection(ids)
         if let leaf = selectedLeafID,
-           !ids.contains(leaf) || value.tasks.contains(where: { $0.parentTaskID == leaf }) {
+            !ids.contains(leaf) || value.tasks.contains(where: { $0.parentTaskID == leaf }) {
             selectedLeafID = nil
             selectedEntryID = nil
         }
         let entries = value.entriesByLeaf[selectedLeafID ?? UUID()] ?? []
         if let entry = selectedEntryID,
-           !entries.contains(where: { $0.id == entry }) {
+            !entries.contains(where: { $0.id == entry }) {
             selectedEntryID = nil
         }
     }

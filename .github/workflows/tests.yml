@@ -12,6 +12,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: SwiftLint
+        run: swiftlint lint --strict --quiet --reporter github-actions-logging
+
       - name: LibraryStore tests
         run: swift test
 

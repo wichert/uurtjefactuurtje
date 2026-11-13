@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import LibraryStore
 
 private func workspaceDirectory() -> URL {
@@ -35,11 +36,15 @@ private actor WorkspaceTestGate {
         let model = fixture.model
         let parent = UUID()
         var value = try #require(model.snapshot)
-        value = try await model.submit(.createTask(id: parent, projectID: fixture.project, parentID: nil,
-            name: "Budget root", budgetMinutes: 100), expectedRevision: value.revision)
+        value = try await model.submit(
+            .createTask(
+                id: parent, projectID: fixture.project, parentID: nil,
+                name: "Budget root", budgetMinutes: 100), expectedRevision: value.revision)
         let leaf = UUID()
-        value = try await model.submit(.createTask(id: leaf, projectID: fixture.project, parentID: parent,
-            name: "Budget leaf", budgetMinutes: 100), expectedRevision: value.revision)
+        value = try await model.submit(
+            .createTask(
+                id: leaf, projectID: fixture.project, parentID: parent,
+                name: "Budget leaf", budgetMinutes: 100), expectedRevision: value.revision)
         fixture.clock.set(1000)
         let started = try await model.enqueueTimer(.start(taskID: leaf)).value
         fixture.clock.set(999)
@@ -53,8 +58,9 @@ private actor WorkspaceTestGate {
         #expect(model.snapshot == started)
         #expect(model.budgetWarnings.isEmpty)
         #expect(fixture.clock.reads == reads + 2)
-        let saved = try await model.submit(.editTask(id: leaf, name: "Saved", budgetMinutes: 80),
-                                           expectedRevision: started.revision)
+        let saved = try await model.submit(
+            .editTask(id: leaf, name: "Saved", budgetMinutes: 80),
+            expectedRevision: started.revision)
         #expect(saved.revision == started.revision + 1)
         #expect(saved.activeTimer?.checkpointAt == 5800)
         #expect(saved.tasks.first { $0.id == leaf }?.name == "Saved")
@@ -65,16 +71,20 @@ private actor WorkspaceTestGate {
         _ = try await model.enqueueTimer(.checkpoint).value
         #expect(model.budgetWarnings.count == 1)
         model.dismissBudgetWarning(batch.id)
-        let renamed = try await model.submit(.renameTask(id: leaf, name: "Rename only"), expectedRevision: saved.revision)
+        let renamed = try await model.submit(
+            .renameTask(id: leaf, name: "Rename only"), expectedRevision: saved.revision)
         #expect(renamed.tasks.first { $0.id == leaf }?.budgetMinutes == 80)
-        let reset = try await model.submit(.editTask(id: leaf, name: "Unset", budgetMinutes: nil), expectedRevision: renamed.revision)
+        let reset = try await model.submit(
+            .editTask(id: leaf, name: "Unset", budgetMinutes: nil), expectedRevision: renamed.revision)
         #expect(model.budgetWarnings.isEmpty)
-        let enabled = try await model.submit(.editTask(id: leaf, name: "Enabled", budgetMinutes: 50), expectedRevision: reset.revision)
+        let enabled = try await model.submit(
+            .editTask(id: leaf, name: "Enabled", budgetMinutes: 50), expectedRevision: reset.revision)
         #expect(model.budgetWarnings.count == 1)
         #expect(model.budgetWarnings[0].warnings == [BudgetWarning(taskID: leaf, threshold: .hundred)])
         fixture.clock.set(5860)
         do {
-            _ = try await model.submit(.editTask(id: leaf, name: "Too large", budgetMinutes: 101), expectedRevision: enabled.revision)
+            _ = try await model.submit(
+                .editTask(id: leaf, name: "Too large", budgetMinutes: 101), expectedRevision: enabled.revision)
             Issue.record("allocation unexpectedly succeeded")
         } catch CommandError.budgetAllocation(let id, let allowance) {
             #expect(id == leaf)
@@ -105,11 +115,15 @@ private actor WorkspaceTestGate {
         let reads = fixture.clock.reads
         #expect(try model.timerElapsedSeconds() == 0)
         #expect(try model.budgetUsage()[fixture.first] == 0)
-        let first = model.enqueueSubmit(.editTask(id: fixture.first, name: "One", budgetMinutes: 1), expectedRevision: started.revision)
-        let stale = model.enqueueSubmit(.editTask(id: fixture.first, name: "Stale", budgetMinutes: 2), expectedRevision: started.revision)
+        let first = model.enqueueSubmit(
+            .editTask(id: fixture.first, name: "One", budgetMinutes: 1), expectedRevision: started.revision)
+        let stale = model.enqueueSubmit(
+            .editTask(id: fixture.first, name: "Stale", budgetMinutes: 2), expectedRevision: started.revision)
         let saved = try await first.value
-        do { _ = try await stale.value; Issue.record("stale form succeeded") }
-        catch StorageError.revisionConflict { }
+        do {
+            _ = try await stale.value
+            Issue.record("stale form succeeded")
+        } catch StorageError.revisionConflict {}
         #expect(model.snapshot == saved)
         #expect(saved.activeTimer == started.activeTimer)
         #expect(model.budgetWarnings.isEmpty)
@@ -132,13 +146,18 @@ private actor WorkspaceTestGate {
         let model = WorkspaceModel(directory: directory, operations: operations)
         model.configureTimer(clock: { clock.read() })
         try await model.open()
-        let project = UUID(), leaf = UUID()
-        _ = try await model.submit(.createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
-        _ = try await model.submit(.createTask(id: leaf, projectID: project, parentID: nil, name: "Leaf", budgetMinutes: 1), expectedRevision: 1)
+        let project = UUID()
+        let leaf = UUID()
+        _ = try await model.submit(
+            .createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
+        _ = try await model.submit(
+            .createTask(id: leaf, projectID: project, parentID: nil, name: "Leaf", budgetMinutes: 1),
+            expectedRevision: 1)
         let started = try await model.enqueueTimer(.start(taskID: leaf)).value
         let rename = model.enqueueSubmit(.renameTask(id: leaf, name: "First"), expectedRevision: started.revision)
         await barrier.wait()
-        let edit = model.enqueueSubmit(.editTask(id: leaf, name: "Second", budgetMinutes: 2), expectedRevision: started.revision + 1)
+        let edit = model.enqueueSubmit(
+            .editTask(id: leaf, name: "Second", budgetMinutes: 2), expectedRevision: started.revision + 1)
         let reads = clock.reads
         let gate = model.timerLifecycleGate
         let generation = await Task.detached { gate.latchSleep() }.value
@@ -147,7 +166,7 @@ private actor WorkspaceTestGate {
         _ = try await rename.value
         let saved = try await edit.value
         #expect(saved.activeTimer == started.activeTimer)
-        #expect(clock.reads == reads + 1) // latchSleep itself captures one receipt-time boundary.
+        #expect(clock.reads == reads + 1)  // latchSleep itself captures one receipt-time boundary.
         #expect(model.budgetWarnings.isEmpty)
         #expect(try model.timerElapsedSeconds() == 0)
         await model.enqueueSleepObservation(generation: generation).value
@@ -163,22 +182,27 @@ private actor WorkspaceTestGate {
             operations.performBudget = { library, command, revision, owned, instant in
                 if mode == 0 { throw StorageError.injectedFailure }
                 if mode == 1 { throw StorageError.sqlite(5, "rejected") }
-                _ = try await library.performOwned(command, expectedRevision: revision,
+                _ = try await library.performOwned(
+                    command, expectedRevision: revision,
                     ownedTimerEntryID: owned, checkpointAt: instant)
                 throw LibraryAccessError.publicationIndeterminate
             }
             let model = WorkspaceModel(directory: directory, operations: operations)
             model.configureTimer(clock: { clock.read() })
             try await model.open()
-            let project = UUID(), leaf = UUID()
-            _ = try await model.submit(.createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
-            _ = try await model.submit(.createTask(id: leaf, projectID: project, parentID: nil, name: "Leaf"), expectedRevision: 1)
+            let project = UUID()
+            let leaf = UUID()
+            _ = try await model.submit(
+                .createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
+            _ = try await model.submit(
+                .createTask(id: leaf, projectID: project, parentID: nil, name: "Leaf"), expectedRevision: 1)
             let before = try await model.enqueueTimer(.start(taskID: leaf)).value
             clock.set(7000)
             do {
-                _ = try await model.submit(.editTask(id: leaf, name: "Crossed", budgetMinutes: 50), expectedRevision: before.revision)
+                _ = try await model.submit(
+                    .editTask(id: leaf, name: "Crossed", budgetMinutes: 50), expectedRevision: before.revision)
                 Issue.record("fault returned success")
-            } catch { }
+            } catch {}
             #expect(model.snapshot == before)
             #expect(model.budgetWarnings.isEmpty)
             #expect(model.timerStatus == .paused(entryID: before.activeTimer!.entryID))
@@ -206,12 +230,16 @@ private actor WorkspaceTestGate {
             return try await library.perform(command, expectedRevision: revision)
         }
         let model = WorkspaceModel(directory: directory, operations: operations)
-        let firstConsumer = model, secondConsumer = model
+        let firstConsumer = model
+        let secondConsumer = model
         try await model.open()
-        let project = UUID(), draft = "Stale draft"
-        let first = firstConsumer.enqueueSubmit(.createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
+        let project = UUID()
+        let draft = "Stale draft"
+        let first = firstConsumer.enqueueSubmit(
+            .createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
         await gate.waitUntilEntered()
-        let stale = secondConsumer.enqueueSubmit(.createProject(id: UUID(), name: draft, rate: 0, currency: "EUR"), expectedRevision: 0)
+        let stale = secondConsumer.enqueueSubmit(
+            .createProject(id: UUID(), name: draft, rate: 0, currency: "EUR"), expectedRevision: 0)
         stale.cancel()
         #expect(model.isBusy)
         await gate.release()
@@ -221,9 +249,12 @@ private actor WorkspaceTestGate {
         #expect(model.issue == .revisionConflict && draft == "Stale draft")
         #expect(!model.isBusy)
 
-        let beforeClose = model.enqueueSubmit(.renameTask(id: UUID(), name: "Missing"), expectedRevision: committed.revision)
+        let beforeClose = model.enqueueSubmit(
+            .renameTask(id: UUID(), name: "Missing"), expectedRevision: committed.revision)
         let close = model.enqueueClose()
-        let rejected = model.enqueueSubmit(.setArchived(id: project, archived: true), expectedRevision: committed.revision)
+        let rejected = model.enqueueSubmit(
+            .setArchived(id: project, archived: true),
+            expectedRevision: committed.revision)
         await #expect(throws: CommandError.missingRecord) { try await beforeClose.value }
         await #expect(throws: LibraryAccessError.unavailable) { try await rejected.value }
         await close.value
@@ -269,7 +300,8 @@ private actor WorkspaceTestGate {
         let original = model.snapshot
         let id = UUID()
         await #expect(throws: LibraryAccessError.publicationIndeterminate) {
-            try await model.submit(.createProject(id: id, name: "Client", rate: 0, currency: "EUR"), expectedRevision: 0)
+            try await model.submit(
+                .createProject(id: id, name: "Client", rate: 0, currency: "EUR"), expectedRevision: 0)
         }
         #expect(model.availability == .blocked && model.issue == .uncertainSave && model.snapshot == original)
         await #expect(throws: LibraryAccessError.unavailable) {
@@ -285,11 +317,18 @@ private actor WorkspaceTestGate {
         let directory = workspaceDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let owner = try await Library.open(at: directory)
-        let project = UUID(), task = UUID()
-        var snapshot = try await owner.perform(.createProject(id: project, name: "Client", rate: 0, currency: "EUR"), expectedRevision: 0)
-        snapshot = try await owner.perform(.createTask(id: task, projectID: project, parentID: nil, name: "Work"), expectedRevision: snapshot.revision)
-        _ = try await owner.transact(expectedRevision: snapshot.revision) { db, _ in
-            try db.runCommand("INSERT INTO pending_sleep_intervals(id,task_id,sleep_at,wake_at) VALUES (?,?,?,?)", bindings: [.text(UUID().uuidString.lowercased()), .text(task.uuidString.lowercased()), .integer(1), .integer(2)], expectedChanges: 1)
+        let project = UUID()
+        let task = UUID()
+        var snapshot = try await owner.perform(
+            .createProject(id: project, name: "Client", rate: 0, currency: "EUR"), expectedRevision: 0)
+        snapshot = try await owner.perform(
+            .createTask(id: task, projectID: project, parentID: nil, name: "Work"), expectedRevision: snapshot.revision)
+        _ = try await owner.transact(expectedRevision: snapshot.revision) { database, _ in
+            try database.runCommand(
+                "INSERT INTO pending_sleep_intervals(id,task_id,sleep_at,wake_at) VALUES (?,?,?,?)",
+                bindings: [
+                    .text(UUID().uuidString.lowercased()), .text(task.uuidString.lowercased()), .integer(1), .integer(2)
+                ], expectedChanges: 1)
         }
         let model = WorkspaceModel(directory: directory)
         await #expect(throws: LibraryOpenError.busy) { try await model.open() }
@@ -299,8 +338,8 @@ private actor WorkspaceTestGate {
         #expect(model.availability == .ready && model.snapshot?.pendingSleepIntervals.count == 1)
         let before = model.snapshot
         await #expect(throws: CommandError.recoveryRequired) {
-          try await model.submit(.renameTask(id: task, name: "No"), expectedRevision: before!.revision)
-      }
+            try await model.submit(.renameTask(id: task, name: "No"), expectedRevision: before!.revision)
+        }
         #expect(model.issue == .recoveryRequired && model.snapshot == before)
         await model.close()
     }
@@ -319,13 +358,20 @@ extension WorkspaceModelTests {
         let fixture = try await TimerFixture.make()
         let model = fixture.model
         let started = try await model.enqueueTimer(.start(taskID: fixture.first)).value
-        let request = TaskCreationRequest(id: UUID(), projectID: fixture.project, parentID: fixture.first,
-                                          name: "Child", confirmMigration: true, start: false)
+        let request = TaskCreationRequest(
+            id: UUID(), projectID: fixture.project, parentID: fixture.first,
+            name: "Child", confirmMigration: true, start: false)
         let creation = model.enqueueTaskCreation(request, expectedRevision: started.revision)
-        guard case .unavailable = model.migrationUndoAvailability else { Issue.record("Undo enabled while mutating"); return }
+        guard case .unavailable = model.migrationUndoAvailability else {
+            Issue.record("Undo enabled while mutating")
+            return
+        }
         let result = try await creation.value
         #expect(result.snapshot.activeTimer == started.activeTimer)
-        guard case let .available(receipt) = model.migrationUndoAvailability else { Issue.record("Undo not available"); return }
+        guard case .available(let receipt) = model.migrationUndoAvailability else {
+            Issue.record("Undo not available")
+            return
+        }
         let undone = try await model.enqueueMigrationUndo(receiptID: receipt).value
         #expect(undone.entries.first?.taskID == fixture.first && undone.activeTimer == started.activeTimer)
         #expect(model.timerStatus == .running(entryID: started.activeTimer!.entryID))
@@ -339,15 +385,22 @@ extension WorkspaceModelTests {
         var operations = WorkspaceOperations()
         operations.createTask = { library, request, revision, owned, instant in
             await barrier.hold()
-            return try await library.createTaskOwned(request, expectedRevision: revision, ownedTimerEntryID: owned, instant: instant)
+            return try await library.createTaskOwned(
+                request, expectedRevision: revision, ownedTimerEntryID: owned,
+                instant: instant)
         }
         let model = WorkspaceModel(directory: directory, operations: operations)
         model.configureTimer(clock: { 100 })
         try await model.open()
-        let project = UUID(), parent = UUID()
-        let created = try await model.submit(.createProject(id: project, name: "Client", rate: 0, currency: "EUR"), expectedRevision: 0)
-        let before = try await model.submit(.createTask(id: parent, projectID: project, parentID: nil, name: "Parent"), expectedRevision: created.revision)
-        let request = TaskCreationRequest(id: UUID(), projectID: project, parentID: parent, name: "Child", confirmMigration: true, start: true)
+        let project = UUID()
+        let parent = UUID()
+        let created = try await model.submit(
+            .createProject(id: project, name: "Client", rate: 0, currency: "EUR"), expectedRevision: 0)
+        let before = try await model.submit(
+            .createTask(id: parent, projectID: project, parentID: nil, name: "Parent"),
+            expectedRevision: created.revision)
+        let request = TaskCreationRequest(
+            id: UUID(), projectID: project, parentID: parent, name: "Child", confirmMigration: true, start: true)
         let work = model.enqueueTaskCreation(request, expectedRevision: before.revision)
         await barrier.waitUntilEntered()
         work.cancel()
@@ -371,23 +424,36 @@ extension WorkspaceModelTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         var operations = WorkspaceOperations()
         operations.createTask = { library, request, revision, owned, instant in
-            _ = try await library.createTaskOwned(request, expectedRevision: revision, ownedTimerEntryID: owned, instant: instant)
+            _ = try await library.createTaskOwned(
+                request, expectedRevision: revision, ownedTimerEntryID: owned,
+                instant: instant)
             throw LibraryAccessError.publicationIndeterminate
         }
         let model = WorkspaceModel(directory: directory, operations: operations)
         try await model.open()
-        let project = UUID(), parent = UUID()
-        let created = try await model.submit(.createProject(id: project, name: "Client", rate: 0, currency: "EUR"), expectedRevision: 0)
-        let before = try await model.submit(.createTask(id: parent, projectID: project, parentID: nil, name: "Parent"), expectedRevision: created.revision)
-        let request = TaskCreationRequest(id: UUID(), projectID: project, parentID: parent, name: "Child", confirmMigration: true, start: false)
+        let project = UUID()
+        let parent = UUID()
+        let created = try await model.submit(
+            .createProject(id: project, name: "Client", rate: 0, currency: "EUR"), expectedRevision: 0)
+        let before = try await model.submit(
+            .createTask(id: parent, projectID: project, parentID: nil, name: "Parent"),
+            expectedRevision: created.revision)
+        let request = TaskCreationRequest(
+            id: UUID(), projectID: project, parentID: parent, name: "Child", confirmMigration: true, start: false)
         await #expect(throws: LibraryAccessError.publicationIndeterminate) {
             try await model.enqueueTaskCreation(request, expectedRevision: before.revision).value
         }
         #expect(model.snapshot == before && model.availability == .blocked && model.issue == .uncertainSave)
-        guard case .unavailable = model.migrationUndoAvailability else { Issue.record("Blocked workspace enabled undo"); return }
+        guard case .unavailable = model.migrationUndoAvailability else {
+            Issue.record("Blocked workspace enabled undo")
+            return
+        }
         try await model.open()
         #expect(model.snapshot?.tasks.filter { $0.id == request.id }.count == 1)
-        guard case .unavailable = model.migrationUndoAvailability else { Issue.record("Reopen retained receipt"); return }
+        guard case .unavailable = model.migrationUndoAvailability else {
+            Issue.record("Reopen retained receipt")
+            return
+        }
         await model.close()
     }
 
@@ -396,13 +462,17 @@ extension WorkspaceModelTests {
         let model = fixture.model
         let started = try await model.enqueueTimer(.start(taskID: fixture.first)).value
         let generation = model.timerLifecycleGate.latchSleep()
-        let request = TaskCreationRequest(id: UUID(), projectID: fixture.project, parentID: fixture.first,
-                                          name: "Child", confirmMigration: true, start: false)
+        let request = TaskCreationRequest(
+            id: UUID(), projectID: fixture.project, parentID: fixture.first,
+            name: "Child", confirmMigration: true, start: false)
         let result = try await model.enqueueTaskCreation(request, expectedRevision: started.revision).value
         #expect(result.snapshot.activeTimer == started.activeTimer)
         #expect(model.timerLifecycleGate.state().sleeping)
         #expect(model.timerStatus == .paused(entryID: started.activeTimer!.entryID))
-        guard case let .available(receipt) = model.migrationUndoAvailability else { Issue.record("Paused migration not undoable"); return }
+        guard case .available(let receipt) = model.migrationUndoAvailability else {
+            Issue.record("Paused migration not undoable")
+            return
+        }
         _ = try await model.enqueueMigrationUndo(receiptID: receipt).value
         #expect(model.timerStatus == .paused(entryID: started.activeTimer!.entryID))
         await model.enqueueSleepObservation(generation: generation).value
@@ -414,19 +484,34 @@ extension WorkspaceModelTests {
         let fixture = try await TimerFixture.make()
         let model = fixture.model
         let started = try await model.enqueueTimer(.start(taskID: fixture.first)).value
-        let request = TaskCreationRequest(id: UUID(), projectID: fixture.project, parentID: fixture.first,
-                                          name: "Child", confirmMigration: true, start: false)
+        let request = TaskCreationRequest(
+            id: UUID(), projectID: fixture.project, parentID: fixture.first,
+            name: "Child", confirmMigration: true, start: false)
         _ = try await model.enqueueTaskCreation(request, expectedRevision: started.revision).value
-        guard case let .available(receipt) = model.migrationUndoAvailability else { Issue.record("Undo not available"); return }
+        guard case .available(let receipt) = model.migrationUndoAvailability else {
+            Issue.record("Undo not available")
+            return
+        }
         fixture.clock.set(110)
         let checkpoint = model.enqueueTimer(.checkpoint)
-        guard case .unavailable = model.migrationUndoAvailability else { Issue.record("Undo enabled during checkpoint"); return }
+        guard case .unavailable = model.migrationUndoAvailability else {
+            Issue.record("Undo enabled during checkpoint")
+            return
+        }
         _ = try await checkpoint.value
-        guard case .unavailable = model.migrationUndoAvailability else { Issue.record("Checkpoint did not invalidate undo"); return }
-        await #expect(throws: CommandError.undoUnavailable) { try await model.enqueueMigrationUndo(receiptID: receipt).value }
+        guard case .unavailable = model.migrationUndoAvailability else {
+            Issue.record("Checkpoint did not invalidate undo")
+            return
+        }
+        await #expect(throws: CommandError.undoUnavailable) {
+            try await model.enqueueMigrationUndo(receiptID: receipt).value
+        }
         await model.close()
         try await model.open()
-        guard case .unavailable = model.migrationUndoAvailability else { Issue.record("Reopen retained undo"); return }
+        guard case .unavailable = model.migrationUndoAvailability else {
+            Issue.record("Reopen retained undo")
+            return
+        }
         await fixture.dispose()
     }
 
@@ -436,22 +521,29 @@ extension WorkspaceModelTests {
         let started = try await model.enqueueTimer(.start(taskID: fixture.first)).value
         fixture.clock.set(110)
         let beforeReads = fixture.clock.reads
-        let request = TaskCreationRequest(id: UUID(), projectID: fixture.project, parentID: fixture.first,
-                                          name: "Child", confirmMigration: true, start: true)
+        let request = TaskCreationRequest(
+            id: UUID(), projectID: fixture.project, parentID: fixture.first,
+            name: "Child", confirmMigration: true, start: true)
         let result = try await model.enqueueTaskCreation(request, expectedRevision: started.revision).value
         #expect(result.snapshot.revision == started.revision + 1 && fixture.clock.reads == beforeReads + 1)
         #expect(result.snapshot.entries.contains { $0.taskID == request.id && $0.startAt == 110 && $0.endAt == nil })
-        guard case .unavailable = model.migrationUndoAvailability else { Issue.record("Started task allowed undo"); return }
+        guard case .unavailable = model.migrationUndoAvailability else {
+            Issue.record("Started task allowed undo")
+            return
+        }
         await fixture.dispose()
     }
     @Test func timerFIFOCoalescingCheckpointLimitAndClose() async throws {
         let fixture = try await TimerFixture.make()
         let model = fixture.model
         let barrier = TimerTestBarrier()
-        model.configureTimer(clock: { fixture.clock.read() }, write: { library, command, revision, instant, id in
-            await barrier.hold()
-            return try await library.performTimer(command, expectedRevision: revision, instant: instant, newEntryID: id)
-        })
+        model.configureTimer(
+            clock: { fixture.clock.read() },
+            write: { library, command, revision, instant, id in
+                await barrier.hold()
+                return try await library.performTimer(
+                    command, expectedRevision: revision, instant: instant, newEntryID: id)
+            })
         let start = model.enqueueTimer(.start(taskID: fixture.first))
         await barrier.wait()
         let duplicate = model.enqueueTimer(.start(taskID: fixture.first))
@@ -480,14 +572,18 @@ extension WorkspaceModelTests {
         let model = fixture.model
         let started = try await model.enqueueTimer(.start(taskID: fixture.first)).value
         let barrier = TimerTestBarrier()
-        model.configureTimer(clock: { fixture.clock.read() }, write: { library, command, revision, instant, id in
-            await barrier.hold()
-            return try await library.performTimer(command, expectedRevision: revision, instant: instant, newEntryID: id)
-        })
+        model.configureTimer(
+            clock: { fixture.clock.read() },
+            write: { library, command, revision, instant, id in
+                await barrier.hold()
+                return try await library.performTimer(
+                    command, expectedRevision: revision, instant: instant, newEntryID: id)
+            })
         fixture.clock.set(110)
         let switchTask = model.enqueueTimer(.start(taskID: fixture.second))
         await barrier.wait()
-        let rename = model.enqueueSubmit(.renameTask(id: fixture.first, name: "Renamed"), expectedRevision: started.revision + 1)
+        let rename = model.enqueueSubmit(
+            .renameTask(id: fixture.first, name: "Renamed"), expectedRevision: started.revision + 1)
         let afterEdit = model.enqueueTimer(.start(taskID: fixture.second))
         await barrier.release()
         let switched = try await switchTask.value
@@ -496,13 +592,20 @@ extension WorkspaceModelTests {
         #expect(edited.activeTimer == switched.activeTimer)
         #expect(repeated == edited && repeated.revision == switched.revision + 1)
         #expect(model.availability == .ready)
-        let projectEdit = try await model.submit(.updateProject(id: fixture.project, name: "Client", rate: 42, currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: edited.revision)
+        let projectEdit = try await model.submit(
+            .updateProject(
+                id: fixture.project, name: "Client", rate: 42, currency: "EUR", confirmedPreviousCurrency: nil),
+            expectedRevision: edited.revision)
         #expect(projectEdit.activeTimer == switched.activeTimer)
         await #expect(throws: CommandError.recoveryRequired) {
-            try await model.submit(.setArchived(id: fixture.project, archived: true), expectedRevision: projectEdit.revision)
+            try await model.submit(
+                .setArchived(id: fixture.project, archived: true),
+                expectedRevision: projectEdit.revision)
         }
         await #expect(throws: CommandError.migrationRequired) {
-            try await model.submit(.createTask(id: UUID(), projectID: fixture.project, parentID: fixture.second, name: "Child"), expectedRevision: projectEdit.revision)
+            try await model.submit(
+                .createTask(id: UUID(), projectID: fixture.project, parentID: fixture.second, name: "Child"),
+                expectedRevision: projectEdit.revision)
         }
         #expect(model.snapshot == projectEdit)
         await fixture.dispose()
@@ -512,12 +615,15 @@ extension WorkspaceModelTests {
         let fixture = try await TimerFixture.make()
         let model = fixture.model
         let barrier = TimerTestBarrier()
-        model.configureTimer(clock: { fixture.clock.read() }, write: { library, command, revision, instant, id in
-            await barrier.hold()
-            return try await library.performTimer(command, expectedRevision: revision, instant: instant, newEntryID: id)
-        })
+        model.configureTimer(
+            clock: { fixture.clock.read() },
+            write: { library, command, revision, instant, id in
+                await barrier.hold()
+                return try await library.performTimer(
+                    command, expectedRevision: revision, instant: instant, newEntryID: id)
+            })
         let start = model.enqueueTimer(.start(taskID: fixture.first))
-        await barrier.wait() // already sampled, not yet published
+        await barrier.wait()  // already sampled, not yet published
         let queued = model.enqueueTimer(.start(taskID: fixture.second))
         let generation = model.timerLifecycleGate.latchSleep()
         let reads = fixture.clock.reads
@@ -539,12 +645,14 @@ extension WorkspaceModelTests {
     }
 
     @Test func olderWakePublicationCannotReleaseNewSleepGeneration() async throws {
-        let fixture = try await TimerFixture.make(), model = fixture.model
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
         _ = try await model.enqueueTimer(.start(taskID: fixture.first)).value
         fixture.clock.set(110)
         let first = model.timerLifecycleGate.latchSleep()
         await model.enqueueSleepObservation(generation: first).value
-        let sleeping = try #require(model.snapshot), barrier = TimerTestBarrier()
+        let sleeping = try #require(model.snapshot)
+        let barrier = TimerTestBarrier()
         model.configureSleepObservations { library, command, revision in
             let result = try await library.performSleepObservation(command, expectedRevision: revision)
             await barrier.hold()
@@ -560,7 +668,9 @@ extension WorkspaceModelTests {
         #expect(model.snapshot?.activeTimer?.checkpointAt == 120)
         #expect(model.timerLifecycleGate.state().generation == second && model.timerLifecycleGate.state().sleeping)
         await model.enqueueSleepObservation(generation: first).value
-        await #expect(throws: TimerError.reviewRequired) { try await model.enqueueTimer(.start(taskID: fixture.second)).value }
+        await #expect(throws: TimerError.reviewRequired) {
+            try await model.enqueueTimer(.start(taskID: fixture.second)).value
+        }
         await fixture.dispose()
     }
 
@@ -569,7 +679,9 @@ extension WorkspaceModelTests {
         let model = fixture.model
         _ = try await model.enqueueTimer(.start(taskID: fixture.first)).value
         fixture.clock.set(110)
-        model.configureTimer(clock: { fixture.clock.read() }, write: { _, _, _, _, _ in throw StorageError.injectedFailure })
+        model.configureTimer(
+            clock: { fixture.clock.read() },
+            write: { _, _, _, _, _ in throw StorageError.injectedFailure })
         await #expect(throws: StorageError.injectedFailure) { try await model.enqueueTimer(.checkpoint).value }
         // A second tick must execute the pause guard, not reuse the failed task.
         await #expect(throws: TimerError.reviewRequired) { try await model.enqueueTimer(.checkpoint).value }
@@ -580,29 +692,38 @@ extension WorkspaceModelTests {
 
 extension WorkspaceModelTests {
     @Test func correctionTimerEditFIFOAndAcceptedCancellation() async throws {
-        let f = try await TimerFixture.make(), model = f.model
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
         let before = try #require(model.snapshot)
-        let shown = try CorrectionPlanner.preview(.add(id: UUID(), taskID: f.first, startAt: 10, endAt: 20), in: before)
+        let shown = try CorrectionPlanner.preview(
+            .add(id: UUID(), taskID: fixture.first, startAt: 10, endAt: 20),
+            in: before)
         let correction = model.enqueueCorrection(.apply(shown))
         correction.cancel()
-        let start = model.enqueueTimer(.start(taskID: f.second))
-        let changed = try await correction.value, running = try await start.value
+        let start = model.enqueueTimer(.start(taskID: fixture.second))
+        let changed = try await correction.value
+        let running = try await start.value
         #expect(changed.revision == before.revision + 1 && running.revision == changed.revision + 1)
         #expect(running.entries.contains(shown.draft.entry) && running.activeTimer != nil)
-        let renamed = try await model.submit(.renameTask(id: f.first, name: "Renamed"), expectedRevision: running.revision)
+        let renamed = try await model.submit(
+            .renameTask(id: fixture.first, name: "Renamed"), expectedRevision: running.revision)
         #expect(renamed.entries == running.entries)
         #expect(model.canUndoCorrection)
         let undone = try await model.enqueueCorrection(.undo).value
         #expect(undone.activeTimer == running.activeTimer && !undone.entries.contains(shown.draft.entry))
         #expect(!model.canUndoCorrection)
-        await f.dispose()
+        await fixture.dispose()
     }
 
     @Test func queuedRenameMakesPreviewStaleWithoutBlanketRevisionCheck() async throws {
-        let f = try await TimerFixture.make(), model = f.model
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
         let before = try #require(model.snapshot)
-        let shown = try CorrectionPlanner.preview(.add(id: UUID(), taskID: f.first, startAt: 10, endAt: 20), in: before)
-        let rename = model.enqueueSubmit(.renameTask(id: f.first, name: "Changed"), expectedRevision: before.revision)
+        let shown = try CorrectionPlanner.preview(
+            .add(id: UUID(), taskID: fixture.first, startAt: 10, endAt: 20),
+            in: before)
+        let rename = model.enqueueSubmit(
+            .renameTask(id: fixture.first, name: "Changed"), expectedRevision: before.revision)
         let correction = model.enqueueCorrection(.apply(shown))
         _ = try await rename.value
         await #expect(throws: CorrectionError.stalePreview) { try await correction.value }
@@ -610,16 +731,21 @@ extension WorkspaceModelTests {
         let fresh = try CorrectionPlanner.preview(shown.draft, in: #require(model.snapshot))
         _ = try await model.enqueueCorrection(.apply(fresh)).value
         #expect(model.canUndoCorrection)
-        await f.dispose()
+        await fixture.dispose()
     }
 
     @Test func confirmedReceiptRollbackRetentionAndExplicitReopen() async throws {
-        let f = try await TimerFixture.make(), model = f.model
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
         let before = try #require(model.snapshot)
-        let shown = try CorrectionPlanner.preview(.add(id: UUID(), taskID: f.first, startAt: 10, endAt: 20), in: before)
+        let shown = try CorrectionPlanner.preview(
+            .add(id: UUID(), taskID: fixture.first, startAt: 10, endAt: 20),
+            in: before)
         let barrier = TimerTestBarrier()
         model.configureCorrections { library, command, receipt, revision, instant in
-            let committed = try await library.performCorrection(command, receipt: receipt, expectedRevision: revision, instant: instant)
+            let committed = try await library.performCorrection(
+                command, receipt: receipt, expectedRevision: revision,
+                instant: instant)
             await barrier.hold()
             return committed
         }
@@ -642,34 +768,48 @@ extension WorkspaceModelTests {
         await model.close()
         try await model.open()
         #expect(!model.canUndoCorrection && model.snapshot?.entries == saved.entries)
-        await f.dispose()
+        await fixture.dispose()
     }
 
     @Test func uncertainPublicationBlocksWithoutReceiptOrReplay() async throws {
-        let f = try await TimerFixture.make(), model = f.model
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
         let before = try #require(model.snapshot)
-        let shown = try CorrectionPlanner.preview(.add(id: UUID(), taskID: f.first, startAt: 10, endAt: 20), in: before)
+        let shown = try CorrectionPlanner.preview(
+            .add(id: UUID(), taskID: fixture.first, startAt: 10, endAt: 20),
+            in: before)
         model.configureCorrections { library, command, receipt, revision, instant in
-            _ = try await library.performCorrection(command, receipt: receipt, expectedRevision: revision, instant: instant)
+            _ = try await library.performCorrection(
+                command, receipt: receipt, expectedRevision: revision,
+                instant: instant)
             throw LibraryAccessError.publicationIndeterminate
         }
-        await #expect(throws: LibraryAccessError.publicationIndeterminate) { try await model.enqueueCorrection(.apply(shown)).value }
+        await #expect(throws: LibraryAccessError.publicationIndeterminate) {
+            try await model.enqueueCorrection(.apply(shown)).value
+        }
         #expect(model.availability == .blocked && model.snapshot == before && !model.canUndoCorrection)
         await #expect(throws: LibraryAccessError.unavailable) { try await model.enqueueCorrection(.apply(shown)).value }
         try await model.open()
         #expect(model.snapshot?.revision == before.revision + 1 && model.snapshot?.entries == [shown.draft.entry])
         #expect(!model.canUndoCorrection)
-        await f.dispose()
+        await fixture.dispose()
     }
 
     @Test func queuedGenerationMismatchAndLaterLatchArePreserved() async throws {
-        let f = try await TimerFixture.make(), model = f.model
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
         let before = try #require(model.snapshot)
-        let one = try CorrectionPlanner.preview(.add(id: UUID(), taskID: f.first, startAt: 10, endAt: 20), in: before)
-        let two = try CorrectionPlanner.preview(.add(id: UUID(), taskID: f.second, startAt: 30, endAt: 40), in: before)
+        let one = try CorrectionPlanner.preview(
+            .add(id: UUID(), taskID: fixture.first, startAt: 10, endAt: 20),
+            in: before)
+        let two = try CorrectionPlanner.preview(
+            .add(id: UUID(), taskID: fixture.second, startAt: 30, endAt: 40),
+            in: before)
         let barrier = TimerTestBarrier()
         model.configureCorrections { library, command, receipt, revision, instant in
-            let committed = try await library.performCorrection(command, receipt: receipt, expectedRevision: revision, instant: instant)
+            let committed = try await library.performCorrection(
+                command, receipt: receipt, expectedRevision: revision,
+                instant: instant)
             await barrier.hold()
             return committed
         }
@@ -683,27 +823,33 @@ extension WorkspaceModelTests {
         #expect(model.timerLifecycleGate.state().generation == generation)
         #expect(model.timerLifecycleGate.state().sleeping && !model.canUndoCorrection)
         #expect(model.snapshot?.entries == [one.draft.entry])
-        await f.dispose()
+        await fixture.dispose()
     }
 
     @Test func correctionRejectsRestoredPausedAndPendingReview() async throws {
-        let f = try await TimerFixture.make(), model = f.model
-        let running = try await model.enqueueTimer(.start(taskID: f.first)).value
-        let shown = try CorrectionPlanner.preview(.add(id: UUID(), taskID: f.second, startAt: 10, endAt: 20), in: running)
-        f.clock.set(99)
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
+        let running = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+        let shown = try CorrectionPlanner.preview(
+            .add(id: UUID(), taskID: fixture.second, startAt: 10, endAt: 20),
+            in: running)
+        fixture.clock.set(99)
         await #expect(throws: TimerError.clockRollback) { try await model.enqueueCorrection(.apply(shown)).value }
-        f.clock.set(110)
+        fixture.clock.set(110)
         await #expect(throws: TimerError.reviewRequired) { try await model.enqueueCorrection(.apply(shown)).value }
         await model.close()
         try await model.open()
         await #expect(throws: TimerError.reviewRequired) { try await model.enqueueCorrection(.apply(shown)).value }
         #expect(model.snapshot == running && !model.canUndoCorrection)
-        await f.dispose()
-        let gate = TimerLifecycleGate(), fixture = CorrectionFixture()
+        await fixture.dispose()
+        let gate = TimerLifecycleGate()
+        let correctionFixture = CorrectionFixture()
         for wake: Int64? in [nil, 60] {
-            let pending = PendingSleepInterval(id: UUID(), taskID: fixture.leaf, sleepAt: 50, wakeAt: wake)
+            let pending = PendingSleepInterval(id: UUID(), taskID: correctionFixture.leaf, sleepAt: 50, wakeAt: wake)
             #expect(throws: TimerError.reviewRequired) {
-                try gate.correctionSample(in: fixture.state(pending: [pending]), ownedEntryID: nil, paused: false, clock: { 100 })
+                try gate.correctionSample(
+                    in: correctionFixture.state(pending: [pending]), ownedEntryID: nil, paused: false,
+                    clock: { 100 })
             }
         }
     }
@@ -711,16 +857,19 @@ extension WorkspaceModelTests {
 
 extension WorkspaceModelTests {
     @Test func reviewFIFOAcceptedCancellationAndReceiptPublication() async throws {
-        let f = try await TimerFixture.make(), model = f.model
-        _ = try await model.enqueueTimer(.start(taskID: f.first)).value
-        f.clock.set(110)
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
+        _ = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+        fixture.clock.set(110)
         let generation = model.timerLifecycleGate.latchSleep()
         await model.enqueueSleepObservation(generation: generation).value
         let before = try #require(model.snapshot)
         let shown = try SleepPlanner.skip(#require(before.pendingSleepIntervals.first), in: before)
         let barrier = TimerTestBarrier()
         model.configureTimeReview { library, command, receipt, revision, instant in
-            let committed = try await library.performTimeReview(command, receipt: receipt, expectedRevision: revision, instant: instant)
+            let committed = try await library.performTimeReview(
+                command, receipt: receipt, expectedRevision: revision,
+                instant: instant)
             await barrier.hold()
             return committed
         }
@@ -728,9 +877,10 @@ extension WorkspaceModelTests {
         task.cancel()
         await barrier.wait()
         #expect(model.snapshot == before && !model.canUndoTimeReview)
-        let start = model.enqueueTimer(.start(taskID: f.second))
+        let start = model.enqueueTimer(.start(taskID: fixture.second))
         await barrier.release()
-        let saved = try await task.value, started = try await start.value
+        let saved = try await task.value
+        let started = try await start.value
         #expect(saved.revision == before.revision + 1 && started.revision == saved.revision + 1)
         #expect(!model.canUndoTimeReview && !model.canUndoCorrection)
         // An unknown-pending Undo cannot coexist with the newly owned active row.
@@ -740,20 +890,23 @@ extension WorkspaceModelTests {
         #expect(model.canUndoTimeReview && stop.activeTimer == nil)
         _ = try await model.enqueueTimeReview(.undo).value
         #expect(!model.canUndoTimeReview && model.snapshot?.pendingSleepIntervals == before.pendingSleepIntervals)
-        await f.dispose()
+        await fixture.dispose()
     }
 
     @Test func acceptedReviewCannotCrossGenerationAndOldPublicationDoesNotResetNewLatch() async throws {
-        let f = try await TimerFixture.make(), model = f.model
-        _ = try await model.enqueueTimer(.start(taskID: f.first)).value
-        f.clock.set(110)
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
+        _ = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+        fixture.clock.set(110)
         let first = model.timerLifecycleGate.latchSleep()
         await model.enqueueSleepObservation(generation: first).value
         let sleeping = try #require(model.snapshot)
         let shown = try SleepPlanner.skip(#require(sleeping.pendingSleepIntervals.first), in: sleeping)
         let barrier = TimerTestBarrier()
         model.configureTimeReview { library, command, receipt, revision, instant in
-            let committed = try await library.performTimeReview(command, receipt: receipt, expectedRevision: revision, instant: instant)
+            let committed = try await library.performTimeReview(
+                command, receipt: receipt, expectedRevision: revision,
+                instant: instant)
             await barrier.hold()
             return committed
         }
@@ -768,15 +921,16 @@ extension WorkspaceModelTests {
         #expect(model.timerLifecycleGate.state().sleeping)
         await model.enqueueWakeObservation(generation: first, observedAt: 120).value
         #expect(model.snapshot == saved && model.timerLifecycleGate.state().sleeping)
-        await f.dispose()
+        await fixture.dispose()
     }
 
     @Test func sleepWakeFailuresNeverPublishPartialStateOrInventContinuation() async throws {
         for waking in [false, true] {
             for mode in 0..<3 {
-                let f = try await TimerFixture.make(), model = f.model
-                _ = try await model.enqueueTimer(.start(taskID: f.first)).value
-                f.clock.set(110)
+                let fixture = try await TimerFixture.make()
+                let model = fixture.model
+                _ = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+                fixture.clock.set(110)
                 let generation = model.timerLifecycleGate.latchSleep()
                 if waking { await model.enqueueSleepObservation(generation: generation).value }
                 let before = try #require(model.snapshot)
@@ -786,8 +940,14 @@ extension WorkspaceModelTests {
                     _ = try await library.performSleepObservation(command, expectedRevision: revision)
                     throw LibraryAccessError.publicationIndeterminate
                 }
-                if waking { await model.enqueueWakeObservation(generation: generation, observedAt: 120).value }
-                else { await model.enqueueSleepObservation(generation: generation).value }
+                if waking {
+                    await model.enqueueWakeObservation(
+                        generation: generation,
+                        observedAt: 120
+                    ).value
+                } else {
+                    await model.enqueueSleepObservation(generation: generation).value
+                }
                 #expect(model.snapshot == before && model.timerLifecycleGate.state().sleeping)
                 if mode == 2 { #expect(model.availability == .blocked) }
                 await model.enqueueWakeObservation(generation: generation, observedAt: 130).value
@@ -798,7 +958,7 @@ extension WorkspaceModelTests {
                 #expect(reopened.revision == before.revision + (mode == 2 ? 1 : 0))
                 await model.enqueueWakeObservation(generation: generation, observedAt: 140).value
                 #expect(model.snapshot == reopened && !model.canUndoTimeReview)
-                await f.dispose()
+                await fixture.dispose()
             }
         }
     }
@@ -806,9 +966,10 @@ extension WorkspaceModelTests {
     @Test func reviewAndUndoFaultsRetainOnlyPublishedReceiptsAndNeverReplay() async throws {
         for undoing in [false, true] {
             for mode in 0..<3 {
-                let f = try await TimerFixture.make(), model = f.model
-                _ = try await model.enqueueTimer(.start(taskID: f.first)).value
-                f.clock.set(110)
+                let fixture = try await TimerFixture.make()
+                let model = fixture.model
+                _ = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+                fixture.clock.set(110)
                 let generation = model.timerLifecycleGate.latchSleep()
                 await model.enqueueSleepObservation(generation: generation).value
                 let sleeping = try #require(model.snapshot)
@@ -819,17 +980,24 @@ extension WorkspaceModelTests {
                 model.configureTimeReview { library, command, receipt, revision, instant in
                     if mode == 0 { throw StorageError.injectedFailure }
                     if mode == 1 { throw StorageError.sqlite(5, "rejected") }
-                    _ = try await library.performTimeReview(command, receipt: receipt, expectedRevision: revision, instant: instant)
+                    _ = try await library.performTimeReview(
+                        command, receipt: receipt, expectedRevision: revision,
+                        instant: instant)
                     throw LibraryAccessError.publicationIndeterminate
                 }
-                do { _ = try await model.enqueueTimeReview(command).value; Issue.record("fault succeeded") }
-                catch { }
+                do {
+                    _ = try await model.enqueueTimeReview(command).value
+                    Issue.record("fault succeeded")
+                } catch {}
                 #expect(model.snapshot == before)
                 #expect(model.canUndoTimeReview == (undoing && mode < 2))
-                if mode == 2 { #expect(model.availability == .blocked) }
-                else if undoing {
+                if mode == 2 {
+                    #expect(model.availability == .blocked)
+                } else if undoing {
                     model.configureTimeReview { library, command, receipt, revision, instant in
-                        try await library.performTimeReview(command, receipt: receipt, expectedRevision: revision, instant: instant)
+                        try await library.performTimeReview(
+                            command, receipt: receipt, expectedRevision: revision,
+                            instant: instant)
                     }
                     _ = try await model.enqueueTimeReview(.undo).value
                     #expect(!model.canUndoTimeReview)
@@ -840,12 +1008,11 @@ extension WorkspaceModelTests {
                 #expect(model.snapshot?.revision == expectedRevision && !model.canUndoTimeReview)
                 await model.enqueueWakeObservation(generation: generation, observedAt: 120).value
                 #expect(model.snapshot?.revision == expectedRevision)
-                await f.dispose()
+                await fixture.dispose()
             }
         }
     }
 }
-
 
 @Suite @MainActor struct WorkspaceModelReportsTests {
     private var calendar: Calendar {
@@ -872,8 +1039,9 @@ extension WorkspaceModelTests {
         #expect(week.total == project.total)
         #expect(model.snapshot == saved && model.budgetWarnings.map(\.id) == warnings)
         fixture.clock.set(110)
-        #expect(try model.projectReport(fixture.project, period: .allTime, calendar: calendar)
-            .total.provisionalSeconds == 20)
+        #expect(
+            try model.projectReport(fixture.project, period: .allTime, calendar: calendar)
+                .total.provisionalSeconds == 20)
         #expect(model.timerStatus == .running(entryID: saved.activeTimer!.entryID))
         await fixture.dispose()
     }
@@ -891,16 +1059,20 @@ extension WorkspaceModelTests {
                 await model.close()
                 try await model.open()
             case 1:
-                model.configureTimer(clock: { fixture.clock.read() }, write: { _, _, _, _, _ in
-                    throw StorageError.injectedFailure
-                })
+                model.configureTimer(
+                    clock: { fixture.clock.read() },
+                    write: { _, _, _, _, _ in
+                        throw StorageError.injectedFailure
+                    })
                 await #expect(throws: StorageError.injectedFailure) {
                     try await model.enqueueTimer(.checkpoint).value
                 }
             case 2:
-                model.configureTimer(clock: { fixture.clock.read() }, write: { _, _, _, _, _ in
-                    throw LibraryAccessError.publicationIndeterminate
-                })
+                model.configureTimer(
+                    clock: { fixture.clock.read() },
+                    write: { _, _, _, _, _ in
+                        throw LibraryAccessError.publicationIndeterminate
+                    })
                 await #expect(throws: LibraryAccessError.publicationIndeterminate) {
                     try await model.enqueueTimer(.checkpoint).value
                 }
@@ -939,26 +1111,39 @@ extension WorkspaceModelTests {
 
 @Suite struct EditorSnapshotComparisonTests {
     @Test func ignoresOnlyCheckpointBookkeeping() {
-        let projectID = UUID(), taskID = UUID(), entryID = UUID(), pendingID = UUID()
+        let projectID = UUID()
+        let taskID = UUID()
+        let entryID = UUID()
+        let pendingID = UUID()
         let project = Project(id: projectID, name: "Client", hourlyRate: 95, currencyCode: "EUR")
         let task = TaskRecord(id: taskID, projectID: projectID, name: "Work", budgetMinutes: 3600)
         let entry = TimeEntry(id: entryID, taskID: taskID, startAt: 100, endAt: nil)
         let timer = ActiveTimer(entryID: entryID, checkpointAt: 110)
         let pending = PendingSleepInterval(id: pendingID, taskID: taskID, sleepAt: 101, wakeAt: 102)
-        func snapshot(schema: Int64 = 2, revision: Int64 = 1,
-                      projects: [Project]? = nil, tasks: [TaskRecord]? = nil,
-                      entries: [TimeEntry]? = nil, active: ActiveTimer? = nil,
-                      stopped: Bool = false, intervals: [PendingSleepInterval]? = nil) -> LibrarySnapshot {
-            LibrarySnapshot(schemaVersion: schema, revision: revision,
+        func snapshot(
+            schema: Int64 = 2, revision: Int64 = 1,
+            projects: [Project]? = nil, tasks: [TaskRecord]? = nil,
+            entries: [TimeEntry]? = nil, active: ActiveTimer? = nil,
+            stopped: Bool = false, intervals: [PendingSleepInterval]? = nil
+        ) -> LibrarySnapshot {
+            LibrarySnapshot(
+                schemaVersion: schema, revision: revision,
                 projects: projects ?? [project], tasks: tasks ?? [task], entries: entries ?? [entry],
                 activeTimer: stopped ? nil : (active ?? timer), pendingSleepIntervals: intervals ?? [pending])
         }
         let base = snapshot()
-        let warning = TaskRecord(id: taskID, projectID: projectID, name: "Work", budgetMinutes: 3600,
-                                 lastWarnedThreshold: .eighty)
-        for harmless in [base, snapshot(revision: 2), snapshot(tasks: [warning]),
-                         snapshot(active: ActiveTimer(entryID: entryID, checkpointAt: 120)),
-                         snapshot(revision: 2, tasks: [warning], active: ActiveTimer(entryID: entryID, checkpointAt: 120))] {
+        let warning = TaskRecord(
+            id: taskID, projectID: projectID, name: "Work", budgetMinutes: 3600,
+            lastWarnedThreshold: .eighty)
+        for harmless in [
+            base, snapshot(revision: 2), snapshot(tasks: [warning]),
+            snapshot(active: ActiveTimer(entryID: entryID, checkpointAt: 120)),
+            snapshot(
+                revision: 2, tasks: [warning],
+                active: ActiveTimer(
+                    entryID: entryID,
+                    checkpointAt: 120))
+        ] {
             #expect(base.editorRelevantEquals(harmless))
             #expect(harmless.editorRelevantEquals(base))
         }
@@ -992,9 +1177,12 @@ extension WorkspaceModelTests {
         let secondTask = TaskRecord(id: UUID(), projectID: projectID, name: "Other")
         let secondEntry = TimeEntry(id: UUID(), taskID: taskID, startAt: 1, endAt: 2)
         let secondPending = PendingSleepInterval(id: UUID(), taskID: taskID, sleepAt: 3, wakeAt: 4)
-        let changes = [snapshot(schema: 1), snapshot(stopped: true),
-                       snapshot(active: ActiveTimer(entryID: UUID(), checkpointAt: 110)),
-                       snapshot(projects: []), snapshot(tasks: []), snapshot(entries: []), snapshot(intervals: [])]
+        let changes =
+            [
+                snapshot(schema: 1), snapshot(stopped: true),
+                snapshot(active: ActiveTimer(entryID: UUID(), checkpointAt: 110)),
+                snapshot(projects: []), snapshot(tasks: []), snapshot(entries: []), snapshot(intervals: [])
+            ]
             + changedProjects.map { snapshot(projects: [$0]) }
             + changedTasks.map { snapshot(tasks: [$0]) }
             + changedEntries.map { snapshot(entries: [$0]) }
@@ -1004,10 +1192,19 @@ extension WorkspaceModelTests {
             #expect(!changed.editorRelevantEquals(base))
         }
         #expect(!snapshot(stopped: true).editorRelevantEquals(base))
-        #expect(!snapshot(projects: [project, secondProject]).editorRelevantEquals(snapshot(projects: [secondProject, project])))
+        #expect(
+            !snapshot(projects: [project, secondProject]).editorRelevantEquals(
+                snapshot(projects: [
+                    secondProject,
+                    project
+                ])))
         #expect(!snapshot(tasks: [task, secondTask]).editorRelevantEquals(snapshot(tasks: [secondTask, task])))
         #expect(!snapshot(entries: [entry, secondEntry]).editorRelevantEquals(snapshot(entries: [secondEntry, entry])))
-        #expect(!snapshot(intervals: [pending, secondPending]).editorRelevantEquals(snapshot(intervals: [secondPending, pending])))
+        #expect(
+            !snapshot(intervals: [
+                pending,
+                secondPending
+            ]).editorRelevantEquals(snapshot(intervals: [secondPending, pending])))
     }
 }
 
@@ -1023,7 +1220,11 @@ private actor EditorOperationProbe {
         revisions.append(revision)
     }
     func readSnapshot() { snapshotReads += 1 }
-    func reset() { paths = []; revisions = []; snapshotReads = 0 }
+    func reset() {
+        paths = []
+        revisions = []
+        snapshotReads = 0
+    }
 }
 
 private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperations {
@@ -1042,17 +1243,20 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
     }
     operations.performBudget = { library, command, revision, owned, instant in
         await probe.write("performBudget", revision: revision)
-        return try await library.performOwned(command, expectedRevision: revision,
-                                               ownedTimerEntryID: owned, checkpointAt: instant)
+        return try await library.performOwned(
+            command, expectedRevision: revision,
+            ownedTimerEntryID: owned, checkpointAt: instant)
     }
     operations.createTask = { library, request, revision, owned, instant in
         await probe.write("createTask", revision: revision)
-        return try await library.createTaskOwned(request, expectedRevision: revision,
-                                                 ownedTimerEntryID: owned, instant: instant)
+        return try await library.createTaskOwned(
+            request, expectedRevision: revision,
+            ownedTimerEntryID: owned, instant: instant)
     }
     operations.createBudgetTask = { library, request, revision, owned, checkpoint in
         await probe.write("createBudgetTask", revision: revision)
-        return try await library.createTaskOwned(request, expectedRevision: revision,
+        return try await library.createTaskOwned(
+            request, expectedRevision: revision,
             ownedTimerEntryID: owned, instant: nil, checkpointAt: checkpoint)
     }
     return operations
@@ -1065,12 +1269,18 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
     model.configureTimer(clock: { clock.read() })
     do {
         try await model.open()
-        let project = UUID(), first = UUID(), second = UUID()
-        _ = try await model.submit(.createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
-        _ = try await model.submit(.createTask(id: first, projectID: project, parentID: nil, name: "First"), expectedRevision: 1)
-        _ = try await model.submit(.createTask(id: second, projectID: project, parentID: nil, name: "Second"), expectedRevision: 2)
-        return TimerFixture(directory: directory, model: model, clock: clock,
-                            project: project, first: first, second: second)
+        let project = UUID()
+        let first = UUID()
+        let second = UUID()
+        _ = try await model.submit(
+            .createProject(id: project, name: "Client", rate: 1, currency: "EUR"), expectedRevision: 0)
+        _ = try await model.submit(
+            .createTask(id: first, projectID: project, parentID: nil, name: "First"), expectedRevision: 1)
+        _ = try await model.submit(
+            .createTask(id: second, projectID: project, parentID: nil, name: "Second"), expectedRevision: 2)
+        return TimerFixture(
+            directory: directory, model: model, clock: clock,
+            project: project, first: first, second: second)
     } catch {
         await model.close()
         try? FileManager.default.removeItem(at: directory)
@@ -1080,23 +1290,23 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
 
 @Suite @MainActor struct EditorQueueTests {
     @Test func availableStatesHaveConfirmedRows() async throws {
-        let f = try await editorFixture(operations: editorOperations(EditorOperationProbe()))
+        let fixture = try await editorFixture(operations: editorOperations(EditorOperationProbe()))
         do {
-            #expect(f.model.availability == .ready)
-            #expect(f.model.snapshot != nil)
-            _ = try await f.model.enqueueTimer(.start(taskID: f.first)).value
-            #expect(f.model.snapshot != nil)
-            await f.model.close()
-            #expect(f.model.availability == .closed)
-            #expect(f.model.snapshot == nil)
-            try await f.model.open()
-            #expect(f.model.availability == .reviewRequired)
-            #expect(f.model.snapshot != nil)
-            await f.model.close()
-            try? FileManager.default.removeItem(at: f.directory)
+            #expect(fixture.model.availability == .ready)
+            #expect(fixture.model.snapshot != nil)
+            _ = try await fixture.model.enqueueTimer(.start(taskID: fixture.first)).value
+            #expect(fixture.model.snapshot != nil)
+            await fixture.model.close()
+            #expect(fixture.model.availability == .closed)
+            #expect(fixture.model.snapshot == nil)
+            try await fixture.model.open()
+            #expect(fixture.model.availability == .reviewRequired)
+            #expect(fixture.model.snapshot != nil)
+            await fixture.model.close()
+            try? FileManager.default.removeItem(at: fixture.directory)
         } catch {
-            await f.model.close()
-            try? FileManager.default.removeItem(at: f.directory)
+            await fixture.model.close()
+            try? FileManager.default.removeItem(at: fixture.directory)
             throw error
         }
     }
@@ -1104,32 +1314,39 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
     @Test(arguments: ["performOwned", "performBudget", "create", "createAndStart"])
     func reviewedEditorBehindCheckpointUsesOneCurrentRevision(path: String) async throws {
         let probe = EditorOperationProbe()
-        let f = try await editorFixture(operations: editorOperations(probe))
+        let fixture = try await editorFixture(operations: editorOperations(probe))
         do {
-            let model = f.model
-            let reviewed = try await model.enqueueTimer(.start(taskID: f.first)).value
+            let model = fixture.model
+            let reviewed = try await model.enqueueTimer(.start(taskID: fixture.first)).value
             let gate = TimerTestBarrier()
-            model.configureTimer(clock: { f.clock.read() }, write: { library, command, revision, instant, id in
-                await gate.hold()
-                return try await library.performTimer(command, expectedRevision: revision, instant: instant, newEntryID: id)
-            })
+            model.configureTimer(
+                clock: { fixture.clock.read() },
+                write: { library, command, revision, instant, id in
+                    await gate.hold()
+                    return try await library.performTimer(
+                        command, expectedRevision: revision, instant: instant,
+                        newEntryID: id)
+                })
             await probe.reset()
-            f.clock.set(120)
+            fixture.clock.set(120)
             let checkpoint = model.enqueueTimer(.checkpoint)
             await gate.wait()
-            let reads = f.clock.reads
+            let reads = fixture.clock.reads
             let createdID = UUID()
             let editor: Task<LibrarySnapshot, Error>
             if path == "create" || path == "createAndStart" {
                 let creation = model.enqueueTaskCreation(
-                    TaskCreationRequest(id: createdID, projectID: f.project, parentID: nil,
-                                        name: "Created", confirmMigration: false, start: path == "createAndStart"),
+                    TaskCreationRequest(
+                        id: createdID, projectID: fixture.project, parentID: nil,
+                        name: "Created", confirmMigration: false, start: path == "createAndStart"),
                     expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
                 editor = Task { try await creation.value.snapshot }
             } else {
-                let command: WorkspaceCommand = path == "performBudget"
-                    ? .editTask(id: f.second, name: "Edited", budgetMinutes: 100)
-                    : .updateProject(id: f.project, name: "Edited", rate: 2, currency: "EUR", confirmedPreviousCurrency: nil)
+                let command: WorkspaceCommand =
+                    path == "performBudget"
+                    ? .editTask(id: fixture.second, name: "Edited", budgetMinutes: 100)
+                    : .updateProject(
+                        id: fixture.project, name: "Edited", rate: 2, currency: "EUR", confirmedPreviousCurrency: nil)
                 editor = model.enqueueSubmit(command, expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
             }
             #expect(model.snapshot == reviewed)
@@ -1144,66 +1361,81 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
             #expect(await probe.paths == [path.hasPrefix("create") ? "createTask" : path])
             #expect(await probe.revisions == [tick.revision])
             #expect(await probe.snapshotReads == 0)
-            #expect(f.clock.reads == reads + (path == "performBudget" || path == "createAndStart" ? 1 : 0))
+            #expect(fixture.clock.reads == reads + (path == "performBudget" || path == "createAndStart" ? 1 : 0))
             if path.hasPrefix("create") {
                 #expect(saved.tasks.contains { $0.id == createdID })
                 if path == "createAndStart" {
                     #expect(saved.entries.contains { $0.taskID == createdID && $0.startAt == 120 && $0.endAt == nil })
-                } else { #expect(saved.activeTimer == tick.activeTimer) }
-            } else { #expect(saved.activeTimer == tick.activeTimer) }
+                } else {
+                    #expect(saved.activeTimer == tick.activeTimer)
+                }
+            } else {
+                #expect(saved.activeTimer == tick.activeTimer)
+            }
             #expect(model.snapshot == saved)
             #expect(model.issue == nil && model.availability == .ready && !model.isBusy)
-            await f.dispose()
-        } catch { await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test func reviewedIdleSubmitUsesPerformOnce() async throws {
         let probe = EditorOperationProbe()
-        let f = try await editorFixture(operations: editorOperations(probe))
+        let fixture = try await editorFixture(operations: editorOperations(probe))
         do {
-            let before = try #require(f.model.snapshot)
+            let before = try #require(fixture.model.snapshot)
             await probe.reset()
             let id = UUID()
-            let saved = try await f.model.enqueueSubmit(
+            let saved = try await fixture.model.enqueueSubmit(
                 .createProject(id: id, name: "New", rate: 0, currency: "EUR"),
-                expectedRevision: -1, reviewedSnapshot: before).value
+                expectedRevision: -1, reviewedSnapshot: before
+            ).value
             #expect(saved.projects.contains { $0.id == id })
             #expect(saved.revision == before.revision + 1)
             #expect(await probe.paths == ["perform"])
             #expect(await probe.revisions == [before.revision])
             #expect(await probe.snapshotReads == 0)
-            await f.dispose()
-        } catch { await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test(arguments: [false, true])
     func queuedRenameRejectsBeforeEditorSamplingOrWrite(creating: Bool) async throws {
-        let probe = EditorOperationProbe(), gate = WorkspaceTestGate()
+        let probe = EditorOperationProbe()
+        let gate = WorkspaceTestGate()
         var operations = editorOperations(probe)
         operations.performOwned = { library, command, revision, owned in
             await probe.write("performOwned", revision: revision)
             if case .renameTask = command { await gate.hold() }
             return try await library.performOwned(command, expectedRevision: revision, ownedTimerEntryID: owned)
         }
-        let f = try await editorFixture(operations: operations)
+        let fixture = try await editorFixture(operations: operations)
         do {
-            let model = f.model
-            let reviewed = try await model.enqueueTimer(.start(taskID: f.first)).value
-            let rename = model.enqueueSubmit(.renameTask(id: f.second, name: "Changed first"), expectedRevision: reviewed.revision)
+            let model = fixture.model
+            let reviewed = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+            let rename = model.enqueueSubmit(
+                .renameTask(id: fixture.second, name: "Changed first"), expectedRevision: reviewed.revision)
             await gate.waitUntilEntered()
             // Exclude the already-entered predecessor: every remaining attempt would be an editor write.
             await probe.reset()
-            let reads = f.clock.reads
+            let reads = fixture.clock.reads
             let editor: Task<LibrarySnapshot, Error>
             if creating {
                 let work = model.enqueueTaskCreation(
-                    TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
-                                        name: "Must not exist", confirmMigration: false, start: true),
+                    TaskCreationRequest(
+                        id: UUID(), projectID: fixture.project, parentID: nil,
+                        name: "Must not exist", confirmMigration: false, start: true),
                     expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
                 editor = Task { try await work.value.snapshot }
             } else {
-                editor = model.enqueueSubmit(.editTask(id: f.first, name: "Must not save", budgetMinutes: 1),
-                                              expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
+                editor = model.enqueueSubmit(
+                    .editTask(id: fixture.first, name: "Must not save", budgetMinutes: 1),
+                    expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
             }
             await gate.release()
             let renamed = try await rename.value
@@ -1212,14 +1444,18 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
             #expect(await probe.paths.isEmpty)
             #expect(await probe.revisions.isEmpty)
             #expect(await probe.snapshotReads == 0)
-            #expect(f.clock.reads == reads)
+            #expect(fixture.clock.reads == reads)
             #expect(model.snapshot == renamed && model.issue == .revisionConflict)
             #expect(model.availability == .ready && !model.isBusy)
             let activeID = try #require(renamed.activeTimer?.entryID)
             #expect(model.timerStatus == .running(entryID: activeID))
-            #expect(renamed.tasks.first { $0.id == f.first }?.name == "First")
-            await f.dispose()
-        } catch { await gate.release(); await f.dispose(); throw error }
+            #expect(renamed.tasks.first { $0.id == fixture.first }?.name == "First")
+            await fixture.dispose()
+        } catch {
+            await gate.release()
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test(arguments: [false, true])
@@ -1231,66 +1467,79 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
             await probe.capture(library)
             return library
         }
-        let f = try await editorFixture(operations: operations)
+        let fixture = try await editorFixture(operations: operations)
         do {
-            let model = f.model
-            let reviewed = try await model.enqueueTimer(.start(taskID: f.first)).value
-            let renamed = try await model.submit(.renameTask(id: f.second, name: "Changed"),
-                                                 expectedRevision: reviewed.revision)
+            let model = fixture.model
+            let reviewed = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+            let renamed = try await model.submit(
+                .renameTask(id: fixture.second, name: "Changed"),
+                expectedRevision: reviewed.revision)
             let library = try #require(await probe.library)
             await library.close()
             await #expect(throws: LibraryAccessError.unavailable) { try await library.migrationUndoAvailability() }
             await probe.reset()
-            let reads = f.clock.reads
+            let reads = fixture.clock.reads
             let editor: Task<LibrarySnapshot, Error>
             if creating {
                 let work = model.enqueueTaskCreation(
-                    TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
-                                        name: "Must not exist", confirmMigration: false, start: true),
+                    TaskCreationRequest(
+                        id: UUID(), projectID: fixture.project, parentID: nil,
+                        name: "Must not exist", confirmMigration: false, start: true),
                     expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
                 editor = Task { try await work.value.snapshot }
             } else {
-                editor = model.enqueueSubmit(.editTask(id: f.first, name: "Must not save", budgetMinutes: 1),
-                                             expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
+                editor = model.enqueueSubmit(
+                    .editTask(id: fixture.first, name: "Must not save", budgetMinutes: 1),
+                    expectedRevision: reviewed.revision, reviewedSnapshot: reviewed)
             }
             await #expect(throws: EditorReviewError.changed) { try await editor.value }
             #expect(await probe.paths.isEmpty)
             #expect(await probe.snapshotReads == 0)
-            #expect(f.clock.reads == reads)
+            #expect(fixture.clock.reads == reads)
             #expect(model.snapshot == renamed && model.issue == .revisionConflict)
             #expect(model.availability == .ready && !model.isBusy)
             let activeID = try #require(renamed.activeTimer?.entryID)
             #expect(model.timerStatus == .running(entryID: activeID))
-            await f.dispose()
-        } catch { await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test(arguments: [false, true])
     func revisionOnlyEditorBehindCheckpointStillConflicts(creating: Bool) async throws {
         let probe = EditorOperationProbe()
-        let f = try await editorFixture(operations: editorOperations(probe))
+        let fixture = try await editorFixture(operations: editorOperations(probe))
         do {
-            let model = f.model
-            let before = try await model.enqueueTimer(.start(taskID: f.first)).value
+            let model = fixture.model
+            let before = try await model.enqueueTimer(.start(taskID: fixture.first)).value
             let gate = TimerTestBarrier()
-            model.configureTimer(clock: { f.clock.read() }, write: { library, command, revision, instant, id in
-                await gate.hold()
-                return try await library.performTimer(command, expectedRevision: revision, instant: instant, newEntryID: id)
-            })
+            model.configureTimer(
+                clock: { fixture.clock.read() },
+                write: { library, command, revision, instant, id in
+                    await gate.hold()
+                    return try await library.performTimer(
+                        command, expectedRevision: revision, instant: instant,
+                        newEntryID: id)
+                })
             await probe.reset()
-            f.clock.set(120)
+            fixture.clock.set(120)
             let checkpoint = model.enqueueTimer(.checkpoint)
             await gate.wait()
             let editor: Task<LibrarySnapshot, Error>
             if creating {
                 let work = model.enqueueTaskCreation(
-                    TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
-                                        name: "Stale", confirmMigration: false, start: false),
+                    TaskCreationRequest(
+                        id: UUID(), projectID: fixture.project, parentID: nil,
+                        name: "Stale", confirmMigration: false, start: false),
                     expectedRevision: before.revision)
                 editor = Task { try await work.value.snapshot }
             } else {
-                editor = model.enqueueSubmit(.updateProject(id: f.project, name: "Stale", rate: 2,
-                    currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: before.revision)
+                editor = model.enqueueSubmit(
+                    .updateProject(
+                        id: fixture.project, name: "Stale", rate: 2,
+                        currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: before.revision)
             }
             await gate.release()
             let tick = try await checkpoint.value
@@ -1302,8 +1551,11 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
             #expect(await probe.snapshotReads == 1)
             #expect(model.snapshot == tick && model.issue == .revisionConflict)
             #expect(model.availability == .ready)
-            await f.dispose()
-        } catch { await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test(arguments: [false, true])
@@ -1313,40 +1565,54 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
         operations.perform = { library, command, revision in
             await probe.write("perform", revision: revision)
             if case .updateProject(let id, _, _, _, _) = command {
-                _ = try await library.perform(.updateProject(id: id, name: "External", rate: 3,
-                    currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: revision)
+                _ = try await library.perform(
+                    .updateProject(
+                        id: id, name: "External", rate: 3,
+                        currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: revision)
             }
             return try await library.perform(command, expectedRevision: revision)
         }
         operations.createTask = { library, request, revision, owned, instant in
             await probe.write("createTask", revision: revision)
-            _ = try await library.perform(.updateProject(id: request.projectID, name: "External", rate: 3,
-                currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: revision)
-            return try await library.createTaskOwned(request, expectedRevision: revision,
-                                                     ownedTimerEntryID: owned, instant: instant)
+            _ = try await library.perform(
+                .updateProject(
+                    id: request.projectID, name: "External", rate: 3,
+                    currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: revision)
+            return try await library.createTaskOwned(
+                request, expectedRevision: revision,
+                ownedTimerEntryID: owned, instant: instant)
         }
         let directory = workspaceDirectory()
         let model = WorkspaceModel(directory: directory, operations: operations)
         do {
             try await model.open()
             let projectID = UUID()
-            var before = try await model.submit(.createProject(id: projectID, name: "Client", rate: 1,
-                currency: "EUR"), expectedRevision: 0)
+            var before = try await model.submit(
+                .createProject(
+                    id: projectID, name: "Client", rate: 1,
+                    currency: "EUR"), expectedRevision: 0)
             await probe.reset()
             let editor: Task<LibrarySnapshot, Error>
             let newID = UUID()
             if creating {
                 let work = model.enqueueTaskCreation(
-                    TaskCreationRequest(id: newID, projectID: projectID, parentID: nil,
-                                        name: "Editor", confirmMigration: false, start: false),
+                    TaskCreationRequest(
+                        id: newID, projectID: projectID, parentID: nil,
+                        name: "Editor", confirmMigration: false, start: false),
                     expectedRevision: before.revision, reviewedSnapshot: before)
                 editor = Task { try await work.value.snapshot }
             } else {
-                editor = model.enqueueSubmit(.updateProject(id: projectID, name: "Editor", rate: 2,
-                    currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: before.revision,
+                editor = model.enqueueSubmit(
+                    .updateProject(
+                        id: projectID, name: "Editor", rate: 2,
+                        currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: before.revision,
                     reviewedSnapshot: before)
             }
-            await #expect(throws: StorageError.revisionConflict(expected: before.revision, actual: before.revision + 1)) {
+            await #expect(
+                throws: StorageError.revisionConflict(
+                    expected: before.revision,
+                    actual: before.revision + 1)
+            ) {
                 try await editor.value
             }
             #expect(await probe.paths == [creating ? "createTask" : "perform"])
@@ -1378,25 +1644,30 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
         }
         operations.createTask = { library, request, revision, owned, instant in
             await probe.write("createTask", revision: revision)
-            _ = try await library.createTaskOwned(request, expectedRevision: revision,
-                                                  ownedTimerEntryID: owned, instant: instant)
+            _ = try await library.createTaskOwned(
+                request, expectedRevision: revision,
+                ownedTimerEntryID: owned, instant: instant)
             throw LibraryAccessError.publicationIndeterminate
         }
-        let f = try await editorFixture(operations: operations)
+        let fixture = try await editorFixture(operations: operations)
         do {
-            let model = f.model, before = try #require(f.model.snapshot)
+            let model = fixture.model
+            let before = try #require(fixture.model.snapshot)
             let newID = UUID()
             await probe.reset()
             let editor: Task<LibrarySnapshot, Error>
             if creating {
                 let work = model.enqueueTaskCreation(
-                    TaskCreationRequest(id: newID, projectID: f.project, parentID: nil,
-                                        name: "Once", confirmMigration: false, start: false),
+                    TaskCreationRequest(
+                        id: newID, projectID: fixture.project, parentID: nil,
+                        name: "Once", confirmMigration: false, start: false),
                     expectedRevision: before.revision, reviewedSnapshot: before)
                 editor = Task { try await work.value.snapshot }
             } else {
-                editor = model.enqueueSubmit(.updateProject(id: f.project, name: "Once", rate: 2,
-                    currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: before.revision,
+                editor = model.enqueueSubmit(
+                    .updateProject(
+                        id: fixture.project, name: "Once", rate: 2,
+                        currency: "EUR", confirmedPreviousCurrency: nil), expectedRevision: before.revision,
                     reviewedSnapshot: before)
             }
             await #expect(throws: LibraryAccessError.publicationIndeterminate) { try await editor.value }
@@ -1407,11 +1678,17 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
             try await model.open()
             let reopened = try #require(model.snapshot)
             #expect(reopened.revision == before.revision + 1)
-            if creating { #expect(reopened.tasks.filter { $0.id == newID }.count == 1) }
-            else { #expect(reopened.projects.first { $0.id == f.project }?.name == "Once") }
+            if creating {
+                #expect(reopened.tasks.filter { $0.id == newID }.count == 1)
+            } else {
+                #expect(reopened.projects.first { $0.id == fixture.project }?.name == "Once")
+            }
             #expect(await probe.paths.count == 1)
-            await f.dispose()
-        } catch { await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await fixture.dispose()
+            throw error
+        }
     }
 }
 
@@ -1437,16 +1714,26 @@ extension WorkspaceModelTests {
         final class WriteCounter: @unchecked Sendable {
             private let lock = NSLock()
             private var count = 0
-            func record() { lock.lock(); count += 1; lock.unlock() }
-            var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+            func record() {
+                lock.lock()
+                count += 1
+                lock.unlock()
+            }
+            var value: Int {
+                lock.lock()
+                defer { lock.unlock() }
+                return count
+            }
         }
         let writes = WriteCounter()
         let clock = fixture.clock
         clock.set(105)
-        model.configureTimer(clock: { clock.read() }, write: { _, _, _, _, _ in
-            writes.record()
-            throw StorageError.invalidStorage("blocked")
-        })
+        model.configureTimer(
+            clock: { clock.read() },
+            write: { _, _, _, _, _ in
+                writes.record()
+                throw StorageError.invalidStorage("blocked")
+            })
         await #expect(throws: StorageError.invalidStorage("blocked")) {
             try await model.enqueueTimer(.checkpoint).value
         }
@@ -1456,7 +1743,7 @@ extension WorkspaceModelTests {
         model.requireTimerReviewAfterClose(sleeping: false)
         #expect(model.availability == .blocked)
         #expect(model.snapshot == started)
-        #expect(writes.value == before) // no replay/write side effect
+        #expect(writes.value == before)  // no replay/write side effect
         await fixture.dispose()
     }
 
@@ -1477,7 +1764,7 @@ extension WorkspaceModelTests {
         #expect(model.timerStatus == .reviewRequired)
         #expect(!model.timerLifecycleGate.state().sleeping)
 
-        // Next real sleep must still latch with a new generation.
+        // Next real sleep must still latch with timer new generation.
         let generation = model.timerLifecycleGate.currentGeneration
         let next = model.timerLifecycleGate.latchSleep()
         #expect(next > generation)
@@ -1493,58 +1780,78 @@ extension WorkspaceModelTests {
 
 extension WorkspaceModelTests {
     @Test func budgetedCreationCheckpointsOnceAndScopesThroughWorkspace() async throws {
-        let f = try await TimerFixture.make(), model = f.model
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
         do {
-            let running = try await model.enqueueTimer(.start(taskID: f.first)).value
-            f.clock.set(160)
-            let reads = f.clock.reads
-            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: f.first,
+            let running = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+            fixture.clock.set(160)
+            let reads = fixture.clock.reads
+            let request = TaskCreationRequest(
+                id: UUID(), projectID: fixture.project, parentID: fixture.first,
                 name: "Budget child", budgetMinutes: 1, confirmMigration: true, start: false)
-            let result = try await model.enqueueTaskCreation(request, expectedRevision: running.revision,
-                                                            reviewedSnapshot: running).value
-            #expect(f.clock.reads == reads + 1)
+            let result = try await model.enqueueTaskCreation(
+                request, expectedRevision: running.revision,
+                reviewedSnapshot: running
+            ).value
+            #expect(fixture.clock.reads == reads + 1)
             #expect(result.snapshot.revision == running.revision + 1)
             #expect(result.snapshot.activeTimer?.entryID == running.activeTimer?.entryID)
             #expect(result.snapshot.activeTimer?.checkpointAt == 160)
             #expect(result.snapshot.tasks.first { $0.id == request.id }?.budgetMinutes == 1)
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-            let report = try model.projectReport(f.project, period: .allTime, calendar: calendar,
-                                                 scopeTaskID: request.id)
+            let report = try model.projectReport(
+                fixture.project, period: .allTime, calendar: calendar,
+                scopeTaskID: request.id)
             #expect(report.scopeTask?.id == request.id && report.total == .zero && !report.hasOpenEntry)
             #expect(model.snapshot == result.snapshot)
-            await f.dispose()
-        } catch { await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test func reviewedBudgetedCreationRebasesAfterCheckpointWithoutResamplingPredecessor() async throws {
-        let f = try await TimerFixture.make(), model = f.model, barrier = TimerTestBarrier()
+        let fixture = try await TimerFixture.make()
+        let model = fixture.model
+        let barrier = TimerTestBarrier()
         do {
-            let reviewed = try await model.enqueueTimer(.start(taskID: f.first)).value
-            model.configureTimer(clock: { f.clock.read() }, write: { library, command, revision, instant, id in
-                await barrier.hold()
-                return try await library.performTimer(command, expectedRevision: revision, instant: instant, newEntryID: id)
-            })
-            f.clock.set(120)
+            let reviewed = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+            model.configureTimer(
+                clock: { fixture.clock.read() },
+                write: { library, command, revision, instant, id in
+                    await barrier.hold()
+                    return try await library.performTimer(
+                        command, expectedRevision: revision, instant: instant,
+                        newEntryID: id)
+                })
+            fixture.clock.set(120)
             let tick = model.enqueueTimer(.checkpoint)
             await barrier.wait()
-            let reads = f.clock.reads
-            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+            let reads = fixture.clock.reads
+            let request = TaskCreationRequest(
+                id: UUID(), projectID: fixture.project, parentID: nil,
                 name: "Budgeted", budgetMinutes: 30, confirmMigration: false, start: false)
-            let work = model.enqueueTaskCreation(request, expectedRevision: reviewed.revision,
-                                                 reviewedSnapshot: reviewed)
+            let work = model.enqueueTaskCreation(
+                request, expectedRevision: reviewed.revision,
+                reviewedSnapshot: reviewed)
             work.cancel()
-            f.clock.set(130)
+            fixture.clock.set(130)
             await barrier.release()
             let checkpoint = try await tick.value
             let saved = try await work.value
             #expect(reviewed.editorRelevantEquals(checkpoint))
             #expect(saved.snapshot.revision == checkpoint.revision + 1)
             #expect(saved.snapshot.activeTimer?.checkpointAt == 130)
-            #expect(f.clock.reads == reads + 1)
+            #expect(fixture.clock.reads == reads + 1)
             #expect(saved.snapshot.tasks.contains { $0.id == request.id && $0.budgetMinutes == 30 })
-            await f.dispose()
-        } catch { await barrier.release(); await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await barrier.release()
+            await fixture.dispose()
+            throw error
+        }
     }
 }
 
@@ -1557,26 +1864,29 @@ extension EditorQueueTests {
             await probe.write("createBudgetTask", revision: revision)
             if mode == 0 { throw StorageError.injectedFailure }
             if mode == 1 { throw StorageError.sqlite(1, "rejected creation") }
-            _ = try await library.createTaskOwned(request, expectedRevision: revision,
+            _ = try await library.createTaskOwned(
+                request, expectedRevision: revision,
                 ownedTimerEntryID: owned, instant: nil, checkpointAt: checkpoint)
             throw LibraryAccessError.publicationIndeterminate
         }
-        let f = try await editorFixture(operations: operations)
+        let fixture = try await editorFixture(operations: operations)
         do {
-            let model = f.model
-            let before = try await model.enqueueTimer(.start(taskID: f.first)).value
+            let model = fixture.model
+            let before = try await model.enqueueTimer(.start(taskID: fixture.first)).value
             let entry = try #require(before.activeTimer?.entryID)
-            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+            let request = TaskCreationRequest(
+                id: UUID(), projectID: fixture.project, parentID: nil,
                 name: "Once", budgetMinutes: 1, confirmMigration: false, start: false)
             await probe.reset()
-            f.clock.set(160)
-            let reads = f.clock.reads
-            do { _ = try await model.enqueueTaskCreation(request, expectedRevision: before.revision).value
+            fixture.clock.set(160)
+            let reads = fixture.clock.reads
+            do {
+                _ = try await model.enqueueTaskCreation(request, expectedRevision: before.revision).value
                 Issue.record("injected creation succeeded")
-            } catch { }
+            } catch {}
             #expect(await probe.paths == ["createBudgetTask"])
             #expect(await probe.revisions == [before.revision])
-            #expect(f.clock.reads == reads + 1)
+            #expect(fixture.clock.reads == reads + 1)
             #expect(model.snapshot == before && model.budgetWarnings.isEmpty)
             #expect(model.timerStatus == .paused(entryID: entry) || model.availability == .blocked)
             #expect(model.availability == (mode == 2 ? .blocked : .ready))
@@ -1594,125 +1904,150 @@ extension EditorQueueTests {
             #expect(reopened.activeTimer?.checkpointAt == (mode == 2 ? 160 : 100))
             #expect(model.budgetWarnings.isEmpty)
             #expect(await probe.paths == ["createBudgetTask"])
-            await f.dispose()
-        } catch { await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test func creationAllocationFailureRollsBackCheckpointAndPauses() async throws {
-        let f = try await editorFixture(operations: editorOperations(EditorOperationProbe()))
+        let fixture = try await editorFixture(operations: editorOperations(EditorOperationProbe()))
         do {
-            let model = f.model
+            let model = fixture.model
             let initial = try #require(model.snapshot)
-            _ = try await model.submit(.editTask(id: f.first, name: "First", budgetMinutes: 1),
-                                       expectedRevision: initial.revision)
-            let before = try await model.enqueueTimer(.start(taskID: f.first)).value
+            _ = try await model.submit(
+                .editTask(id: fixture.first, name: "First", budgetMinutes: 1),
+                expectedRevision: initial.revision)
+            let before = try await model.enqueueTimer(.start(taskID: fixture.first)).value
             let id = try #require(before.activeTimer?.entryID)
-            f.clock.set(160)
-            let reads = f.clock.reads
-            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: f.first,
+            fixture.clock.set(160)
+            let reads = fixture.clock.reads
+            let request = TaskCreationRequest(
+                id: UUID(), projectID: fixture.project, parentID: fixture.first,
                 name: "Too large", budgetMinutes: 2, confirmMigration: true, start: false)
             do {
                 _ = try await model.enqueueTaskCreation(request, expectedRevision: before.revision).value
                 Issue.record("allocation accepted")
             } catch CommandError.budgetAllocation(let task, let allowance) {
                 #expect(task == request.id && allowance.maximumMinutes == 1)
-                #expect(allowance.limitingAncestorID == f.first)
+                #expect(allowance.limitingAncestorID == fixture.first)
             }
-            #expect(f.clock.reads == reads + 1)
+            #expect(fixture.clock.reads == reads + 1)
             #expect(model.snapshot == before && model.budgetWarnings.isEmpty)
             #expect(model.timerStatus == .paused(entryID: id))
             await model.close()
             try await model.open()
             #expect(model.snapshot == before)
-            await f.dispose()
-        } catch { await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test(arguments: [false, true])
     func budgetCreationRejectsQueuedEditorOrGenerationChange(editorChange: Bool) async throws {
-        let probe = EditorOperationProbe(), barrier = TimerTestBarrier()
+        let probe = EditorOperationProbe()
+        let barrier = TimerTestBarrier()
         var operations = editorOperations(probe)
         operations.performOwned = { library, command, revision, owned in
             await barrier.hold()
             return try await library.performOwned(command, expectedRevision: revision, ownedTimerEntryID: owned)
         }
-        let f = try await editorFixture(operations: operations)
+        let fixture = try await editorFixture(operations: operations)
         do {
-            let model = f.model
-            let reviewed = try await model.enqueueTimer(.start(taskID: f.first)).value
-            // An unchanged rename supplies a FIFO barrier without changing editor state.
-            let predecessor = model.enqueueSubmit(.renameTask(id: f.second,
-                name: editorChange ? "Changed" : "Second"), expectedRevision: reviewed.revision)
+            let model = fixture.model
+            let reviewed = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+            // An unchanged rename supplies timer FIFO barrier without changing editor state.
+            let predecessor = model.enqueueSubmit(
+                .renameTask(
+                    id: fixture.second,
+                    name: editorChange ? "Changed" : "Second"), expectedRevision: reviewed.revision)
             await barrier.wait()
             await probe.reset()
-            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+            let request = TaskCreationRequest(
+                id: UUID(), projectID: fixture.project, parentID: nil,
                 name: "Rejected", budgetMinutes: 1, confirmMigration: false, start: false)
-            let work = model.enqueueTaskCreation(request, expectedRevision: reviewed.revision,
-                                                 reviewedSnapshot: reviewed)
+            let work = model.enqueueTaskCreation(
+                request, expectedRevision: reviewed.revision,
+                reviewedSnapshot: reviewed)
             if !editorChange {
                 let generation = model.timerLifecycleGate.latchSleep()
                 #expect(model.timerLifecycleGate.reset(generation: generation))
             }
-            let reads = f.clock.reads
+            let reads = fixture.clock.reads
             await barrier.release()
             let saved = try await predecessor.value
             if editorChange {
                 await #expect(throws: EditorReviewError.changed) { try await work.value }
-                #expect(f.clock.reads == reads)
+                #expect(fixture.clock.reads == reads)
             } else {
                 await #expect(throws: TimerError.reviewRequired) { try await work.value }
-                #expect(f.clock.reads == reads + 1)
+                #expect(fixture.clock.reads == reads + 1)
             }
             #expect(await probe.paths.isEmpty)
             #expect(model.snapshot == saved)
             #expect(!saved.tasks.contains { $0.id == request.id })
-            await f.dispose()
-        } catch { await barrier.release(); await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await barrier.release()
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test(arguments: [false, true])
     func pausedOrSleepingBudgetCreationNeverSamples(sleeping: Bool) async throws {
         let probe = EditorOperationProbe()
-        let f = try await editorFixture(operations: editorOperations(probe))
+        let fixture = try await editorFixture(operations: editorOperations(probe))
         do {
-            let model = f.model
-            let started = try await model.enqueueTimer(.start(taskID: f.first)).value
-            if sleeping { _ = model.timerLifecycleGate.latchSleep() }
-            else {
-                f.clock.set(99)
+            let model = fixture.model
+            let started = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+            if sleeping {
+                _ = model.timerLifecycleGate.latchSleep()
+            } else {
+                fixture.clock.set(99)
                 await #expect(throws: TimerError.clockRollback) { try await model.enqueueTimer(.checkpoint).value }
             }
             await probe.reset()
-            let reads = f.clock.reads
-            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+            let reads = fixture.clock.reads
+            let request = TaskCreationRequest(
+                id: UUID(), projectID: fixture.project, parentID: nil,
                 name: "Saved prefix only", budgetMinutes: 1, confirmMigration: false, start: false)
             let result = try await model.enqueueTaskCreation(request, expectedRevision: started.revision).value
-            #expect(f.clock.reads == reads)
+            #expect(fixture.clock.reads == reads)
             #expect(await probe.paths == ["createTask"])
             #expect(result.snapshot.activeTimer == started.activeTimer)
             #expect(result.snapshot.tasks.first { $0.id == request.id }?.budgetMinutes == 1)
             if sleeping { #expect(model.timerLifecycleGate.state().sleeping) }
-            await f.dispose()
-        } catch { await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test func sampledCreationDrainsBeforeQueuedClose() async throws {
-        let probe = EditorOperationProbe(), barrier = TimerTestBarrier()
+        let probe = EditorOperationProbe()
+        let barrier = TimerTestBarrier()
         var operations = editorOperations(probe)
         operations.createBudgetTask = { library, request, revision, owned, checkpoint in
             await probe.write("createBudgetTask", revision: revision)
             await barrier.hold()
-            return try await library.createTaskOwned(request, expectedRevision: revision,
+            return try await library.createTaskOwned(
+                request, expectedRevision: revision,
                 ownedTimerEntryID: owned, instant: nil, checkpointAt: checkpoint)
         }
-        let f = try await editorFixture(operations: operations)
+        let fixture = try await editorFixture(operations: operations)
         do {
-            let model = f.model
-            let before = try await model.enqueueTimer(.start(taskID: f.first)).value
-            f.clock.set(160)
+            let model = fixture.model
+            let before = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+            fixture.clock.set(160)
             await probe.reset()
-            let reads = f.clock.reads
-            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+            let reads = fixture.clock.reads
+            let request = TaskCreationRequest(
+                id: UUID(), projectID: fixture.project, parentID: nil,
                 name: "Drain sampled write", budgetMinutes: 1, confirmMigration: false, start: false)
             let work = model.enqueueTaskCreation(request, expectedRevision: before.revision)
             await barrier.wait()
@@ -1726,32 +2061,39 @@ extension EditorQueueTests {
             #expect(result.snapshot.activeTimer?.checkpointAt == 160)
             #expect(result.snapshot.revision == before.revision + 1)
             #expect(model.availability == .closed && model.snapshot == nil)
-            #expect(f.clock.reads == reads + 1)
+            #expect(fixture.clock.reads == reads + 1)
             #expect(await probe.paths == ["createBudgetTask"])
             try await model.open()
             #expect(model.snapshot == result.snapshot)
             #expect(model.snapshot?.tasks.filter { $0.id == request.id }.count == 1)
-            await f.dispose()
-        } catch { await barrier.release(); await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await barrier.release()
+            await fixture.dispose()
+            throw error
+        }
     }
 
     @Test func sampledCreationPreservesLaterSleepAndDrainsBeforeClose() async throws {
-        let probe = EditorOperationProbe(), barrier = TimerTestBarrier()
+        let probe = EditorOperationProbe()
+        let barrier = TimerTestBarrier()
         var operations = editorOperations(probe)
         operations.createBudgetTask = { library, request, revision, owned, checkpoint in
             await probe.write("createBudgetTask", revision: revision)
             await barrier.hold()
-            return try await library.createTaskOwned(request, expectedRevision: revision,
+            return try await library.createTaskOwned(
+                request, expectedRevision: revision,
                 ownedTimerEntryID: owned, instant: nil, checkpointAt: checkpoint)
         }
-        let f = try await editorFixture(operations: operations)
+        let fixture = try await editorFixture(operations: operations)
         do {
-            let model = f.model
-            let before = try await model.enqueueTimer(.start(taskID: f.first)).value
-            f.clock.set(160)
+            let model = fixture.model
+            let before = try await model.enqueueTimer(.start(taskID: fixture.first)).value
+            fixture.clock.set(160)
             await probe.reset()
-            let reads = f.clock.reads
-            let request = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+            let reads = fixture.clock.reads
+            let request = TaskCreationRequest(
+                id: UUID(), projectID: fixture.project, parentID: nil,
                 name: "Accepted", budgetMinutes: 1, confirmMigration: false, start: false)
             let work = model.enqueueTaskCreation(request, expectedRevision: before.revision)
             await barrier.wait()
@@ -1762,20 +2104,25 @@ extension EditorQueueTests {
             #expect(model.timerLifecycleGate.state().sleeping)
             #expect(result.snapshot.activeTimer?.checkpointAt == 160)
             // A second accepted saved-prefix creation queues before close; close must drain it.
-            let second = TaskCreationRequest(id: UUID(), projectID: f.project, parentID: nil,
+            let second = TaskCreationRequest(
+                id: UUID(), projectID: fixture.project, parentID: nil,
                 name: "Before close", budgetMinutes: 1, confirmMigration: false, start: false)
             let accepted = model.enqueueTaskCreation(second, expectedRevision: result.snapshot.revision)
             let close = model.enqueueClose()
             let saved = try await accepted.value
             await close.value
             #expect(model.availability == .closed && model.snapshot == nil)
-            // One read for the creation sample, one for latchSleep's observation boundary.
-            #expect(f.clock.reads == reads + 2)
+            // One read for the creation sample, one for latchSleep'statement observation boundary.
+            #expect(fixture.clock.reads == reads + 2)
             #expect(await probe.paths == ["createBudgetTask", "createTask"])
             try await model.open()
             #expect(model.snapshot == saved.snapshot)
             #expect(model.snapshot?.tasks.filter { $0.id == request.id || $0.id == second.id }.count == 2)
-            await f.dispose()
-        } catch { await barrier.release(); await f.dispose(); throw error }
+            await fixture.dispose()
+        } catch {
+            await barrier.release()
+            await fixture.dispose()
+            throw error
+        }
     }
 }
