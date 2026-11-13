@@ -1,0 +1,19 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+      - name: LibraryStore tests
+        run: swift test
+      - name: App tests
+        run: |
+          xcodebuild test \
+            -project UurtjeFactuurtje.xcodeproj \
+            -scheme UurtjeFactuurtje \
+            -destination 'platform=macOS'
