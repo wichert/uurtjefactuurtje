@@ -39,8 +39,8 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
 @Suite @MainActor struct NativeHostTests {
     @Test func notificationsConsentDedupAndDefensiveResponses() async throws {
         try await withTrack { track, _ in
-            let project = try await project(track)
-            let id = try await task(track, project: project)
+            let projectID = try await project(track)
+            let id = try await task(track, project: projectID)
             var prompts = 0
             var delivered: [UNNotificationRequest] = []
             var revealed: [UUID] = []
@@ -61,7 +61,7 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
             let enabled = LibrarySnapshot(
                 schemaVersion: 2, revision: baseline.revision + 1,
                 projects: baseline.projects,
-                tasks: [TaskRecord(id: id, projectID: project, name: "Task", budgetMinutes: 100)],
+                tasks: [TaskRecord(id: id, projectID: projectID, name: "Task", budgetMinutes: 100)],
                 entries: [], activeTimer: nil, pendingSleepIntervals: [])
             let fresh = BudgetWarningBatch(id: UUID(), warnings: batch.warnings)
             notifications.consume(snapshot: enabled, batches: [batch, fresh])
@@ -122,8 +122,8 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
             let host = NativeHost(directory: directory, workspace: track.workspace)
             let clock = NativeClock()
             track.workspace.configureTimer(clock: { clock.read() })
-            let project = try await project(track)
-            let id = try await task(track, project: project)
+            let projectID = try await project(track)
+            let id = try await task(track, project: projectID)
             host.submitTimer(.start(taskID: id))
             await host.drain()
             let lifecycle = Lifecycle(host: host)
@@ -180,8 +180,8 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
             let host = NativeHost(directory: directory, workspace: track.workspace)
             let clock = NativeClock()
             track.workspace.configureTimer(clock: { clock.read() })
-            let project = try await project(track)
-            let id = try await task(track, project: project)
+            let projectID = try await project(track)
+            let id = try await task(track, project: projectID)
             host.submitTimer(.start(taskID: id))
             await host.drain()
             let lifecycle = Lifecycle(host: host)
@@ -219,8 +219,8 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
     @Test func unavailableQuitDoesNotReopenOrMutate() async throws {
         try await withTrack { track, directory in
             let host = NativeHost(directory: directory, workspace: track.workspace)
-            let project = try await project(track)
-            let id = try await task(track, project: project)
+            let projectID = try await project(track)
+            let id = try await task(track, project: projectID)
             host.submitTimer(.start(taskID: id))
             await host.drain()
             let before = try #require(track.workspace.snapshot)
@@ -258,8 +258,8 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
             let host = NativeHost(directory: directory, workspace: track.workspace)
             let clock = NativeClock()
             track.workspace.configureTimer(clock: { clock.read() })
-            let project = try await project(track)
-            let id = try await task(track, project: project)
+            let projectID = try await project(track)
+            let id = try await task(track, project: projectID)
             host.submitTimer(.start(taskID: id))
             await host.drain()
             let before = try #require(track.workspace.snapshot)

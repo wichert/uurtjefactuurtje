@@ -22,23 +22,23 @@ import Testing
             }
             #expect(draft.isNew)
             track.cancelSheet()
-            let project = try await project(track)
-            track.selectedProjectID = project
-            track.newTask(projectID: project)
+            let projectID = try await project(track)
+            track.selectedProjectID = projectID
+            track.newTask(projectID: projectID)
             guard case .task(let next) = track.sheet else {
                 Issue.record("Expected first task")
                 return
             }
-            #expect(next.projectID == project)
+            #expect(next.projectID == projectID)
             #expect(next.isNew)
             #expect(track.workspace.snapshot?.activeTimer == nil)
         }
     }
     @Test func repeatedRevealDefersSheetAndArchivedSelection() async throws {
         try await withTrack { track, _ in
-            let project = try await project(track)
-            let root = try await task(track, project: project, name: "Root")
-            let leaf = try await task(track, project: project, parent: root, name: "Leaf")
+            let projectID = try await project(track)
+            let root = try await task(track, project: projectID, name: "Root")
+            let leaf = try await task(track, project: projectID, parent: root, name: "Leaf")
             track.editTask(leaf)
             let token = track.routeToken
             track.search = "hidden"
@@ -53,12 +53,12 @@ import Testing
             track.cancelSheet()
             let statement = try #require(track.workspace.snapshot)
             _ = try await track.workspace.submit(
-                .setArchived(id: project, archived: true),
+                .setArchived(id: projectID, archived: true),
                 expectedRevision: statement.revision)
             track.showArchived = false
             track.reconcile()
             #expect(track.selectedTaskID == leaf)
-            #expect(track.selectedProjectID == project)
+            #expect(track.selectedProjectID == projectID)
             #expect(!track.eligible(leaf))
             #expect(!track.canStartFromList(leaf, listFocused: true))
             track.revealTask(leaf)
@@ -67,8 +67,8 @@ import Testing
     }
     @Test func filteredRunningIdentityAndDisplayDoNotWrite() async throws {
         try await withTrack { track, _ in
-            let project = try await project(track)
-            let leaf = try await task(track, project: project)
+            let projectID = try await project(track)
+            let leaf = try await task(track, project: projectID)
             _ = try await track.workspace.enqueueTimer(.start(taskID: leaf)).value
             let before = try #require(track.workspace.snapshot)
             let warnings = track.workspace.budgetWarnings.map(\.id)

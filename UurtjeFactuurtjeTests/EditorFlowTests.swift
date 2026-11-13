@@ -46,9 +46,9 @@ import Testing
     }
     @Test func suspendedDraftRestoresOnSaveAndCancel() async throws {
         try await withTrack { track, _ in
-            let project = try await project(track)
-            let root = try await task(track, project: project, name: "Root")
-            let leaf = try await task(track, project: project, parent: root, name: "Leaf")
+            let projectID = try await project(track)
+            let root = try await task(track, project: projectID, name: "Root")
+            let leaf = try await task(track, project: projectID, parent: root, name: "Leaf")
             track.editTask(leaf)
             guard case .task(var draft) = track.sheet else {
                 Issue.record("Missing task")
@@ -58,7 +58,7 @@ import Testing
             draft.budgetHours = "17.5"
             track.updateTaskDraft(draft)
             let statement = try #require(track.workspace.snapshot)
-            _ = try BudgetRules.allowance(in: statement, projectID: project, parentTaskID: root, editingTaskID: leaf)
+            _ = try BudgetRules.allowance(in: statement, projectID: projectID, parentTaskID: root, editingTaskID: leaf)
             _ = try BudgetRules.allocations(in: statement)
             track.editConstrainingBudget(taskID: root)
             #expect(track.suspendedTaskDraft?.name == "Unsent name")
@@ -85,8 +85,8 @@ import Testing
     }
     @Test func migrationRevisionConsentAndCommittedStart() async throws {
         try await withTrack { track, _ in
-            let project = try await project(track)
-            let parent = try await task(track, project: project)
+            let projectID = try await project(track)
+            let parent = try await task(track, project: projectID)
             let before = try #require(track.workspace.snapshot)
             let preview = try CorrectionPlanner.preview(
                 .add(id: UUID(), taskID: parent, startAt: 100, endAt: 200),
@@ -97,14 +97,15 @@ import Testing
             do {
                 _ = try await track.workspace.enqueueTaskCreation(
                     TaskCreationRequest(
-                        id: child, projectID: project, parentID: parent, name: "New", confirmMigration: false,
+                        id: child, projectID: projectID, parentID: parent, name: "New", confirmMigration: false,
                         start: false), expectedRevision: statement.revision
                 ).value
                 Issue.record("Unconfirmed migration succeeded")
             } catch { #expect(track.workspace.snapshot == statement) }
             let result = try await track.workspace.enqueueTaskCreation(
                 TaskCreationRequest(
-                    id: child, projectID: project, parentID: parent, name: "New", confirmMigration: true, start: false),
+                    id: child, projectID: projectID, parentID: parent, name: "New",
+                    confirmMigration: true, start: false),
                 expectedRevision: statement.revision
             ).value
             #expect(result.movedEntryCount == 1)
@@ -118,7 +119,7 @@ import Testing
             do {
                 _ = try await track.workspace.enqueueTaskCreation(
                     TaskCreationRequest(
-                        id: UUID(), projectID: project, parentID: nil, name: "Stale", confirmMigration: false,
+                        id: UUID(), projectID: projectID, parentID: nil, name: "Stale", confirmMigration: false,
                         start: true), expectedRevision: statement.revision
                 ).value
                 Issue.record("Stale request succeeded")
@@ -127,7 +128,7 @@ import Testing
             let running = UUID()
             let accepted = track.workspace.enqueueTaskCreation(
                 TaskCreationRequest(
-                    id: running, projectID: project, parentID: nil, name: "Start",
+                    id: running, projectID: projectID, parentID: nil, name: "Start",
                     confirmMigration: false, start: true),
                 expectedRevision: current.revision)
             #expect(track.workspace.snapshot == current)
@@ -140,8 +141,8 @@ import Testing
     }
     @Test func currencyConfirmationAndArchiveRetention() async throws {
         try await withTrack { track, _ in
-            let project = try await project(track)
-            let leaf = try await task(track, project: project)
+            let projectID = try await project(track)
+            let leaf = try await task(track, project: projectID)
             let statement = try #require(track.workspace.snapshot)
             let preview = try CorrectionPlanner.preview(
                 .add(id: UUID(), taskID: leaf, startAt: 100, endAt: 200),
@@ -151,15 +152,15 @@ import Testing
             do {
                 _ = try await track.workspace.submit(
                     .updateProject(
-                        id: project, name: "Project", rate: 1, currency: "USD", confirmedPreviousCurrency: nil),
+                        id: projectID, name: "Project", rate: 1, currency: "USD", confirmedPreviousCurrency: nil),
                     expectedRevision: before.revision)
                 Issue.record("Missing currency consent accepted")
             } catch { #expect(track.workspace.snapshot == before) }
             _ = try await track.workspace.submit(
                 .updateProject(
-                    id: project, name: "Project", rate: 1, currency: "USD", confirmedPreviousCurrency: "EUR"),
+                    id: projectID, name: "Project", rate: 1, currency: "USD", confirmedPreviousCurrency: "EUR"),
                 expectedRevision: before.revision)
-            track.editProject(project)
+            track.editProject(projectID)
             guard case .project(let draft) = track.sheet else {
                 Issue.record("Missing draft")
                 return
@@ -169,15 +170,15 @@ import Testing
             track.cancelSheet()
             let current = try #require(track.workspace.snapshot)
             _ = try await track.workspace.submit(
-                .setArchived(id: project, archived: true),
+                .setArchived(id: projectID, archived: true),
                 expectedRevision: current.revision)
             #expect(track.workspace.snapshot?.entries == before.entries)
         }
     }
     @Test func nativeMinuteBindingPreservesOtherSavedBoundaryAndPersistsExactInstants() async throws {
         try await withTrack { track, _ in
-            let project = try await project(track)
-            let leaf = try await task(track, project: project)
+            let projectID = try await project(track)
+            let leaf = try await task(track, project: projectID)
             let utc = try #require(TimeZone(secondsFromGMT: 0))
             let id = UUID()
             let lowerBound: Int64 = 1_700_000_017
@@ -260,7 +261,7 @@ import Testing
         #expect(EntryDisclosure.offset(20701) == "approximately UTC+05:45 (historical offset)")
         #expect(EntryDisclosure.durationText(3660) == "1 h 1 min")
         #expect(EntryDisclosure.durationText(3661) == "approximately 1 h 1 min")
-        #expect(EntryDisclosure.durationText(17) == "less than timer minute")
+        #expect(EntryDisclosure.durationText(17) == "less than a minute")
         #expect(EntryDisclosure.durationText(0) == "0 h 0 min")
         #expect(!EntryDisclosure.bound(instant, zone: zone).contains(String(instant)))
     }
@@ -319,15 +320,15 @@ import Testing
             contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent().deletingLastPathComponent()
                 .appendingPathComponent("UurtjeFactuurtje/TimeReviewView.swift"), encoding: .utf8)
-        #expect(source.range(of: "var body: some View {\\statement*VStack", options: .regularExpression) != nil)
+        #expect(source.range(of: "var body: some View {\\s*VStack", options: .regularExpression) != nil)
         #expect(
             source.range(
-                of: #"\}\statement*\.frame\(maxWidth: \.infinity, maxHeight: \.infinity\)"# +
-                    #"\statement*HStack \{\statement*Button\("Cancel""#,
+                of: #"\}\s*\.frame\(maxWidth: \.infinity, maxHeight: \.infinity\)"# +
+                    #"\s*HStack \{\s*Button\("Cancel""#,
                 options: .regularExpression) != nil)
         #expect(
             source.range(
-                of: #"Button\("Confirm reviewed action"\) \{ confirm\(\) \}\statement*\.disabled\(stale"#,
+                of: #"Button\("Confirm reviewed action"\) \{ confirm\(\) \}\s*\.disabled\(stale"#,
                 options: .regularExpression) != nil)
         #expect(source.contains("static func saveAndStop"))
         #expect(source.contains("static func interruptionSummary"))

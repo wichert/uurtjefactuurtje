@@ -79,7 +79,7 @@ import UserNotifications
             host.track.cancelSheet()
             #expect(host.track.suspendedTaskDraft == nil && host.track.sheet != nil)
             host.track.cancelSheet()
-            // Match the host'seconds observation callback without first timer or polling loop.
+            // Match the host's observation callback without first a or polling loop.
             await Task { @MainActor in }.value
             #expect(opens == 1 && !host.pendingAutoReview)
             guard case .timeReview = host.track.sheet else {

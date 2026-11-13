@@ -123,7 +123,7 @@ extension EditorFlowTests {
             #expect(review.requestedEnd == 137)
             #expect(
                 EntryDisclosure.durationText(active.checkpointAt - entry.startAt)
-                    == "less than timer minute")
+                    == "less than a minute")
             try await verifyCheckpointReopen(
                 track: track, saved: saved, active: active, entry: entry,
                 context: CheckpointContext(

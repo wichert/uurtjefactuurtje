@@ -21,7 +21,7 @@ extension EditorFlowTests {
         #expect(summary.contains("Discard interrupted entry on Project / Leaf."))
         #expect(
             summary.contains("Saved durable checkpoint: \(EntryDisclosure.bound(137, zone: zone))."))
-        #expect(summary.contains("Checkpointed duration: less than timer minute."))
+        #expect(summary.contains("Checkpointed duration: less than a minute."))
         #expect(
             summary.contains(
                 "Explicit discard removes the interrupted entry, including all its checkpointed time."))

@@ -23,8 +23,8 @@ import Testing
             #expect(directory.inputError(in: seconds) == nil)
             directory.reviewedSnapshot = nil
             #expect(directory.inputError(in: seconds) == nil)
-            directory.name = " \n\track"
-            #expect(directory.inputError(in: seconds) == "Enter timer project name.")
+            directory.name = " \n\t"
+            #expect(directory.inputError(in: seconds) == "Enter a project name.")
             directory.name = "A\0B"
             #expect(
                 directory.inputError(in: seconds) == "Remove the null character from the project name.")
@@ -32,7 +32,7 @@ import Testing
             directory.rateText = "-1"
             #expect(
                 directory.inputError(in: seconds)
-                    == "Enter timer nonnegative decimal rate without grouping separators.")
+                    == "Enter a nonnegative decimal rate without grouping separators.")
             directory.rateText = "0"
             for bad in ["", "eur", "ZZZ", " EUR "] {
                 directory.currencyCode = bad
@@ -93,7 +93,7 @@ import Testing
             new.observedRevision = latest.revision
             #expect(
                 new.inputError(in: latest)
-                    == "A task with this name already exists under this parent. Choose timer different name.")
+                    == "A task with this name already exists under this parent. Choose a different name.")
             let result = track.workspace.enqueueTaskCreation(
                 new.request(start: false), expectedRevision: latest.revision, reviewedSnapshot: latest)
             do {
@@ -153,11 +153,11 @@ import Testing
         directory.parentID = nil
         #expect(
             directory.inputError(in: before)
-                == "A task with this name already exists under this parent. Choose timer different name.")
+                == "A task with this name already exists under this parent. Choose a different name.")
         directory.name = "Elsewhere"
         #expect(directory.inputError(in: before) == nil)
         directory.name = " \n"
-        #expect(directory.inputError(in: before) == "Enter timer task name.")
+        #expect(directory.inputError(in: before) == "Enter a task name.")
         directory.name = "A\0B"
         #expect(directory.inputError(in: before) == "Remove the null character from the task name.")
     }

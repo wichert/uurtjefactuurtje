@@ -57,9 +57,9 @@ extension NSBitmapImageRep {
             #expect(
                 MenuBarStatus.project(host: host, at: Date(timeIntervalSince1970: 100)).accessibilityLabel
                     == "Tracking stopped")
-            let project = try await project(track, name: "First")
+            let projectID = try await project(track, name: "First")
             let other = try await project(track, name: "Second")
-            let id = try await task(track, project: project, name: "Duplicate")
+            let id = try await task(track, project: projectID, name: "Duplicate")
             _ = try await task(track, project: other, name: "Duplicate")
             _ = try await track.workspace.enqueueTimer(.start(taskID: id)).value
             let controller = MenuBarController(host: host, install: false)
@@ -106,8 +106,8 @@ extension NSBitmapImageRep {
             #expect(host.workspace === track.workspace)
             #expect(host.track.workspace === host.workspace)
             #expect(lifecycle.host === host)
-            let project = try await project(track, name: "First")
-            let id = try await task(track, project: project, name: "Work")
+            let projectID = try await project(track, name: "First")
+            let id = try await task(track, project: projectID, name: "Work")
             _ = try await track.workspace.enqueueTimer(.start(taskID: id)).value
             clock.set(107)
             let baseline = MenuBarStatus.project(host: host, at: Date(timeIntervalSince1970: 107))
@@ -137,7 +137,7 @@ extension NSBitmapImageRep {
                     #expect(controller.status.accessibilityLabel.contains("Tracking First / Work"))
                     #expect(
                         controller.status.accessibilityLabel.contains(
-                            "\(count) pending sleep interval(statement) need review — unbilled"))
+                            "\(count) pending sleep interval(s) need review — unbilled"))
                 }
                 #expect(track.workspace.snapshot == before)
                 #expect(track.workspace.budgetWarnings.map(\.id) == warnings)
@@ -146,7 +146,7 @@ extension NSBitmapImageRep {
                 controller.refresh(at: Date(timeIntervalSince1970: Double(wakeAt + 7)))
                 #expect(controller.status.title.isEmpty)
                 #expect(controller.status.accessibilityLabel.contains("Time needs review"))
-                #expect(controller.status.accessibilityLabel.contains("\(count) pending sleep interval(statement)"))
+                #expect(controller.status.accessibilityLabel.contains("\(count) pending sleep interval(s)"))
                 #expect(track.workspace.snapshot == idle)
                 if count == 1 {
                     clock.set(wakeAt + 8)

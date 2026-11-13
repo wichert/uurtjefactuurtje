@@ -107,7 +107,7 @@ import Testing
                     directory.budgetHours = invalid
                     #expect(
                         directory.inputError(in: seconds)
-                            == "Enter positive budget hours that represent timer whole number of minutes.")
+                            == "Enter positive budget hours that represent a whole number of minutes.")
                 }
                 directory.budgetEnabled = false
                 #expect(directory.inputError(in: seconds) == nil)

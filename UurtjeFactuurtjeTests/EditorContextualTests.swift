@@ -96,7 +96,7 @@ extension ContextualTaskBudgetTests {
             directory.parentID = foreign
             #expect(
                 directory.inputError(in: seconds)
-                    == "This parent is unavailable. Cancel and select timer task in this project.")
+                    == "This parent is unavailable. Cancel and select a task in this project.")
             directory.parentID = UUID()
             #expect(directory.inputError(in: seconds) != nil)
             directory.parentID = nil
