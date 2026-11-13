@@ -6,11 +6,15 @@ on:
 
 jobs:
   test:
+    name: Run tests
     runs-on: xcode-27
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: LibraryStore tests
         run: swift test
+
       - name: App tests
         run: |
           xcodebuild test \
