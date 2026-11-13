@@ -1,7 +1,9 @@
 import Foundation
 
 public enum WarningThreshold: Int64, Sendable, CaseIterable {
-    case none = 0, eighty = 80, hundred = 100
+    case none = 0
+    case eighty = 80
+    case hundred = 100
 }
 
 public struct Project: Identifiable, Equatable, Sendable {
@@ -11,8 +13,10 @@ public struct Project: Identifiable, Equatable, Sendable {
     public let currencyCode: String
     public let isArchived: Bool
 
-    public init(id: UUID, name: String, hourlyRate: Decimal, currencyCode: String,
-                isArchived: Bool = false) {
+    public init(
+        id: UUID, name: String, hourlyRate: Decimal, currencyCode: String,
+        isArchived: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.hourlyRate = hourlyRate
@@ -29,8 +33,10 @@ public struct TaskRecord: Identifiable, Equatable, Sendable {
     public let budgetMinutes: Int64?
     public let lastWarnedThreshold: WarningThreshold
 
-    public init(id: UUID, projectID: UUID, parentTaskID: UUID? = nil, name: String,
-                budgetMinutes: Int64? = nil, lastWarnedThreshold: WarningThreshold = .none) {
+    public init(
+        id: UUID, projectID: UUID, parentTaskID: UUID? = nil, name: String,
+        budgetMinutes: Int64? = nil, lastWarnedThreshold: WarningThreshold = .none
+    ) {
         self.id = id
         self.projectID = projectID
         self.parentTaskID = parentTaskID
@@ -88,9 +94,11 @@ public struct LibrarySnapshot: Equatable, Sendable {
     public let activeTimer: ActiveTimer?
     public let pendingSleepIntervals: [PendingSleepInterval]
 
-    public init(schemaVersion: Int64, revision: Int64, projects: [Project], tasks: [TaskRecord],
-                entries: [TimeEntry], activeTimer: ActiveTimer?,
-                pendingSleepIntervals: [PendingSleepInterval]) {
+    public init(
+        schemaVersion: Int64, revision: Int64, projects: [Project], tasks: [TaskRecord],
+        entries: [TimeEntry], activeTimer: ActiveTimer?,
+        pendingSleepIntervals: [PendingSleepInterval]
+    ) {
         self.schemaVersion = schemaVersion
         self.revision = revision
         self.projects = projects
@@ -143,11 +151,13 @@ extension LibrarySnapshot {
     /// Editor review ignores checkpoint bookkeeping, never a changed record or timer identity.
     public func editorRelevantEquals(_ other: LibrarySnapshot) -> Bool {
         func reviewed(_ value: LibrarySnapshot) -> LibrarySnapshot {
-            LibrarySnapshot(schemaVersion: value.schemaVersion, revision: 0,
+            LibrarySnapshot(
+                schemaVersion: value.schemaVersion, revision: 0,
                 projects: value.projects,
                 tasks: value.tasks.map {
-                    TaskRecord(id: $0.id, projectID: $0.projectID, parentTaskID: $0.parentTaskID,
-                               name: $0.name, budgetMinutes: $0.budgetMinutes, lastWarnedThreshold: .none)
+                    TaskRecord(
+                        id: $0.id, projectID: $0.projectID, parentTaskID: $0.parentTaskID,
+                        name: $0.name, budgetMinutes: $0.budgetMinutes, lastWarnedThreshold: .none)
                 }, entries: value.entries,
                 activeTimer: value.activeTimer.map { ActiveTimer(entryID: $0.entryID, checkpointAt: 0) },
                 pendingSleepIntervals: value.pendingSleepIntervals)

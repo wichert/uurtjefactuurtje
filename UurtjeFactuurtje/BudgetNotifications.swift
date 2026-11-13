@@ -17,22 +17,27 @@ import UserNotifications
     private var generation = UUID()
     private var pending: Task<Void, Never>?
 
-    convenience init(path: @escaping @MainActor (UUID) -> String,
-                     reveal: @escaping @MainActor (UUID) -> Void,
-                     center: UNUserNotificationCenter = .current()) {
-        self.init(path: path, reveal: reveal,
-                  authorizationStatus: { await center.notificationSettings().authorizationStatus },
-                  requestAuthorization: { try await center.requestAuthorization(options: [.alert, .sound]) },
-                  deliver: { try await center.add($0) })
+    convenience init(
+        path: @escaping @MainActor (UUID) -> String,
+        reveal: @escaping @MainActor (UUID) -> Void,
+        center: UNUserNotificationCenter = .current()
+    ) {
+        self.init(
+            path: path, reveal: reveal,
+            authorizationStatus: { await center.notificationSettings().authorizationStatus },
+            requestAuthorization: { try await center.requestAuthorization(options: [.alert, .sound]) },
+            deliver: { try await center.add($0) })
         center.delegate = self
     }
 
     // This initializer never obtains a notification center, including in unbundled tests.
-    init(path: @escaping @MainActor (UUID) -> String,
-         reveal: @escaping @MainActor (UUID) -> Void,
-         authorizationStatus: @escaping @MainActor () async -> UNAuthorizationStatus,
-         requestAuthorization: @escaping @MainActor () async throws -> Bool,
-         deliver: @escaping @MainActor (UNNotificationRequest) async throws -> Void) {
+    init(
+        path: @escaping @MainActor (UUID) -> String,
+        reveal: @escaping @MainActor (UUID) -> Void,
+        authorizationStatus: @escaping @MainActor () async -> UNAuthorizationStatus,
+        requestAuthorization: @escaping @MainActor () async throws -> Bool,
+        deliver: @escaping @MainActor (UNNotificationRequest) async throws -> Void
+    ) {
         self.path = path
         self.reveal = reveal
         self.authorizationStatus = authorizationStatus
@@ -42,8 +47,10 @@ import UserNotifications
     }
 
     // Call with nil at the close/reopen boundary; existing batches become baseline, not deliveries.
-    func consume(snapshot: LibrarySnapshot?, batches: [BudgetWarningBatch],
-                 acknowledge: (UUID) -> Void = { _ in }) {
+    func consume(
+        snapshot: LibrarySnapshot?, batches: [BudgetWarningBatch],
+        acknowledge: (UUID) -> Void = { _ in }
+    ) {
         defer { for batch in batches { acknowledge(batch.id) } }
         guard let snapshot else {
             baseline = nil
@@ -58,9 +65,11 @@ import UserNotifications
             return
         }
         let previousTasks = Dictionary(uniqueKeysWithValues: before.tasks.map { ($0.id, $0) })
-        let enabled = snapshot.revision > before.revision && snapshot.tasks.contains {
-            $0.budgetMinutes != nil && previousTasks[$0.id]?.budgetMinutes == nil
-        }
+        let enabled =
+            snapshot.revision > before.revision
+            && snapshot.tasks.contains {
+                $0.budgetMinutes != nil && previousTasks[$0.id]?.budgetMinutes == nil
+            }
         baseline = snapshot
         let shouldRequest = enabled && !authorizationAttempted
 
@@ -132,8 +141,9 @@ import UserNotifications
 
     func notify(id: UUID, title: String, body: String, taskIDs: [UUID] = []) {
         guard taskIDs.count <= Self.maximumTaskIDs,
-              Set(taskIDs).count == taskIDs.count,
-              seenNoticeIDs.insert(id).inserted else { return }
+            Set(taskIDs).count == taskIDs.count,
+            seenNoticeIDs.insert(id).inserted
+        else { return }
         let content = UNMutableNotificationContent()
         content.sound = .default
         content.title = title
@@ -141,8 +151,9 @@ import UserNotifications
         if !taskIDs.isEmpty {
             content.userInfo = ["taskIDs": taskIDs.map { $0.uuidString.lowercased() }]
         }
-        let request = UNNotificationRequest(identifier: "notice.\(id.uuidString.lowercased())",
-                                             content: content, trigger: nil)
+        let request = UNNotificationRequest(
+            identifier: "notice.\(id.uuidString.lowercased())",
+            content: content, trigger: nil)
         let previous = pending
         let generation = generation
         pending = Task { @MainActor in
@@ -150,7 +161,8 @@ import UserNotifications
             guard self.generation == generation else { return }
             let status = await authorizationStatus()
             guard self.generation == generation,
-                  status == .authorized || status == .provisional else { return }
+                status == .authorized || status == .provisional
+            else { return }
             // Informational notices do not prompt for permission or mutate the workspace.
             do { try await deliver(request) } catch { return }
         }
@@ -160,12 +172,14 @@ import UserNotifications
 
     nonisolated static func taskIDs(in userInfo: [AnyHashable: Any]) -> [UUID]? {
         guard let values = userInfo["taskIDs"] as? [Any],
-              (1...maximumTaskIDs).contains(values.count) else { return nil }
+            (1...maximumTaskIDs).contains(values.count)
+        else { return nil }
         var result: [UUID] = []
         var seen = Set<UUID>()
         for value in values {
             guard let value = value as? String, value.utf8.count == 36, let id = UUID(uuidString: value),
-                  value == id.uuidString.lowercased(), seen.insert(id).inserted else { return nil }
+                value == id.uuidString.lowercased(), seen.insert(id).inserted
+            else { return nil }
             result.append(id)
         }
         return result
@@ -182,15 +196,19 @@ import UserNotifications
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        handleResponse(actionIdentifier: response.actionIdentifier,
-                       userInfo: response.notification.request.content.userInfo, completion: completionHandler)
+        handleResponse(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: response.notification.request.content.userInfo, completion: completionHandler)
     }
 
-    nonisolated func handleResponse(actionIdentifier: String, userInfo: [AnyHashable: Any],
-                                    completion: () -> Void) {
+    nonisolated func handleResponse(
+        actionIdentifier: String, userInfo: [AnyHashable: Any],
+        completion: () -> Void
+    ) {
         defer { completion() }
         guard actionIdentifier == UNNotificationDefaultActionIdentifier,
-              let id = Self.taskIDs(in: userInfo)?.first else { return }
+            let id = Self.taskIDs(in: userInfo)?.first
+        else { return }
         Task { @MainActor [weak self] in self?.reveal(id) }
     }
 }

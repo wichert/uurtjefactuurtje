@@ -9,7 +9,8 @@ struct MenuBarStatus: Equatable {
     @MainActor static func project(host: NativeHost, at date: Date) -> MenuBarStatus {
         let model = host.workspace
         let pendingCount = model.snapshot?.pendingSleepIntervals.count ?? 0
-        let pendingDescription = pendingCount > 0
+        let pendingDescription =
+            pendingCount > 0
             ? ", \(pendingCount) pending sleep interval(s) need review — unbilled" : ""
         func state(_ label: String, _ image: String) -> MenuBarStatus {
             MenuBarStatus(title: "", systemImage: image, accessibilityLabel: label + pendingDescription)
@@ -26,10 +27,11 @@ struct MenuBarStatus: Equatable {
         case .paused: return state("Tracking paused — review time", "pause.circle")
         case .running:
             guard let snapshot = model.snapshot, let active = snapshot.activeTimer,
-                  let entry = snapshot.entries.first(where: { $0.id == active.entryID }),
-                  let instant = Lifecycle.wholeSecond(date), instant >= active.checkpointAt,
-                  host.track.eligible(entry.taskID),
-                  let seconds = try? model.timerElapsedSeconds(), seconds >= 0 else {
+                let entry = snapshot.entries.first(where: { $0.id == active.entryID }),
+                let instant = Lifecycle.wholeSecond(date), instant >= active.checkpointAt,
+                host.track.eligible(entry.taskID),
+                let seconds = try? model.timerElapsedSeconds(), seconds >= 0
+            else {
                 return state("Tracking paused — clock or timer needs review", "exclamationmark.clock")
             }
             let label = "Tracking \(host.track.path(entry.taskID)), \(elapsed(seconds)) elapsed"
@@ -71,7 +73,8 @@ struct MenuBarStatus: Equatable {
     }
 
     init(host: NativeHost, install: Bool = true) {
-        self.host = host; status = MenuBarStatus.project(host: host, at: Date())
+        self.host = host
+        status = MenuBarStatus.project(host: host, at: Date())
         super.init()
         menu.autoenablesItems = false
         menu.delegate = self
@@ -139,7 +142,8 @@ struct MenuBarStatus: Equatable {
     func rebuildMenu() {
         let track = host.track
         let enabled = host.acceptingMutations
-        let startIDs = WorkspaceMenu.recentTasks(track)
+        let startIDs =
+            WorkspaceMenu.recentTasks(track)
             + WorkspaceMenu.matchingTasks(track, query: searchField.stringValue)
         projection = WorkspaceMenuProjection(
             stopTitle: WorkspaceMenu.stopTitle(track),
@@ -192,11 +196,12 @@ struct MenuBarStatus: Equatable {
             makeStartItem(taskID: $0, enabled: enabled)
         }
         items.append(.separator())
-        items.append(makeItem(
-            title: "Open main window",
-            action: #selector(openMainWindow(_:)),
-            enabled: true,
-        ))
+        items.append(
+            makeItem(
+                title: "Open main window",
+                action: #selector(openMainWindow(_:)),
+                enabled: true,
+            ))
         items.append(makeItem(title: "Quit", action: #selector(quitApp(_:)), enabled: true))
         return items
     }
@@ -238,7 +243,7 @@ struct MenuBarStatus: Equatable {
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
             if let firstMatch = WorkspaceMenu.matchingTasks(host.track, query: searchField.stringValue).first,
-               host.acceptingMutations {
+                host.acceptingMutations {
                 host.submitTimer(.start(taskID: firstMatch))
                 menu.cancelTracking()
             }
@@ -266,8 +271,10 @@ struct MenuBarStatus: Equatable {
     }
 
     func invalidate() {
-        displayTimer?.invalidate(); displayTimer = nil
+        displayTimer?.invalidate()
+        displayTimer = nil
         menu.cancelTracking()
-        if let item { NSStatusBar.system.removeStatusItem(item) }; item = nil
+        if let item { NSStatusBar.system.removeStatusItem(item) }
+        item = nil
     }
 }

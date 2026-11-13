@@ -1,7 +1,7 @@
-import Foundation
-import Darwin
-import CryptoKit
 import CoreFoundation
+import CryptoKit
+import Darwin
+import Foundation
 
 // Internal hooks deliberately do not form part of the public opening API.
 enum RecoveryPoint: String, CaseIterable, Sendable {
@@ -17,7 +17,7 @@ enum RecoveryIOPoint: String, CaseIterable, Sendable {
 
 struct RecoveryHooks: Sendable {
     var recovery: @Sendable (RecoveryPoint) throws -> Void = { _ in }
-    var io: @Sendable (RecoveryIOPoint) throws -> Void = { _ in }
+    var failureInjector: @Sendable (RecoveryIOPoint) throws -> Void = { _ in }
 }
 
 final class LibraryLease: @unchecked Sendable {
@@ -26,20 +26,20 @@ final class LibraryLease: @unchecked Sendable {
 
     init(directory: URL) throws {
         let path = directory.appendingPathComponent(".library-lock").path
-        let fd = Darwin.open(path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw LibraryOpenError.filesystem("open lock", errno) }
+        let descriptor = Darwin.open(path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw LibraryOpenError.filesystem("open lock", errno) }
         var info = stat()
-        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1 else {
-            Darwin.close(fd)
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1 else {
+            Darwin.close(descriptor)
             throw LibraryOpenError.unsafeState("invalid lock file")
         }
-        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             let code = errno
-            Darwin.close(fd)
+            Darwin.close(descriptor)
             if code == EWOULDBLOCK { throw LibraryOpenError.busy }
             throw LibraryOpenError.filesystem("flock", code)
         }
-        descriptor = fd
+        self.descriptor = descriptor
     }
 
     func release() {
@@ -88,8 +88,9 @@ struct RecoveryFiles: Sendable {
         try directory(parent)
         for component in components.dropFirst() {
             let child = parent.appendingPathComponent(component, isDirectory: true)
-            if try status(child) != nil { try directory(child) }
-            else {
+            if try status(child) != nil {
+                try directory(child)
+            } else {
                 guard mkdir(child.path, 0o700) == 0 else {
                     throw LibraryOpenError.filesystem("mkdir \(child.path)", errno)
                 }
@@ -101,67 +102,78 @@ struct RecoveryFiles: Sendable {
 
     func syncDirectory(_ url: URL) throws {
         try directory(url)
-        let fd = Darwin.open(url.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else { throw LibraryOpenError.filesystem("open directory", errno) }
+        let descriptor = Darwin.open(url.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw LibraryOpenError.filesystem("open directory", errno) }
         do {
-            try hooks.io(.directorySync)
-            guard fsync(fd) == 0 else { throw LibraryOpenError.filesystem("directory fsync", errno) }
-        } catch { Darwin.close(fd); throw error }
-        guard Darwin.close(fd) == 0 else { throw LibraryOpenError.filesystem("close directory", errno) }
+            try hooks.failureInjector(.directorySync)
+            guard fsync(descriptor) == 0 else { throw LibraryOpenError.filesystem("directory fsync", errno) }
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
+        guard Darwin.close(descriptor) == 0 else { throw LibraryOpenError.filesystem("close directory", errno) }
     }
 
-    func flush(_ fd: Int32) throws {
-        try hooks.io(.fileSync)
-        guard fsync(fd) == 0 else { throw LibraryOpenError.filesystem("file fsync", errno) }
-        try hooks.io(.fullSync)
-        guard fcntl(fd, F_FULLFSYNC) == 0 else {
+    func flush(_ descriptor: Int32) throws {
+        try hooks.failureInjector(.fileSync)
+        guard fsync(descriptor) == 0 else { throw LibraryOpenError.filesystem("file fsync", errno) }
+        try hooks.failureInjector(.fullSync)
+        guard fcntl(descriptor, F_FULLFSYNC) == 0 else {
             throw LibraryOpenError.filesystem("F_FULLFSYNC", errno)
         }
     }
 
     func read(_ url: URL) throws -> Data {
         guard try regular(url) else { throw LibraryOpenError.unsafeState("missing file: \(url.path)") }
-        let fd = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else { throw LibraryOpenError.filesystem("open read", errno) }
+        let descriptor = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw LibraryOpenError.filesystem("open read", errno) }
         var result = Data()
         var bytes = [UInt8](repeating: 0, count: 65_536)
         do {
             while true {
-                let count = Darwin.read(fd, &bytes, bytes.count)
+                let count = Darwin.read(descriptor, &bytes, bytes.count)
                 if count < 0, errno == EINTR { continue }
                 guard count >= 0 else { throw LibraryOpenError.filesystem("read", errno) }
                 if count == 0 { break }
                 result.append(contentsOf: bytes.prefix(count))
             }
-        } catch { Darwin.close(fd); throw error }
-        guard Darwin.close(fd) == 0 else { throw LibraryOpenError.filesystem("close read", errno) }
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
+        guard Darwin.close(descriptor) == 0 else { throw LibraryOpenError.filesystem("close read", errno) }
         return result
     }
 
     func write(_ data: Data, to url: URL, settings: Bool = false) throws {
-        let fd = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw LibraryOpenError.filesystem("exclusive create", errno) }
+        let descriptor = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw LibraryOpenError.filesystem("exclusive create", errno) }
         do {
-            if settings { try hooks.io(.settingsTempCreated) }
+            if settings { try hooks.failureInjector(.settingsTempCreated) }
             try data.withUnsafeBytes { buffer in
                 var offset = 0
                 while offset < buffer.count {
-                    let count = Darwin.write(fd, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                    let count = Darwin.write(
+                        descriptor, buffer.baseAddress!.advanced(by: offset),
+                        buffer.count - offset)
                     if count < 0, errno == EINTR { continue }
                     guard count > 0 else { throw LibraryOpenError.filesystem("write", errno) }
                     offset += count
                 }
             }
-            if settings { try hooks.io(.settingsWritten) }
-            try flush(fd)
-            if settings { try hooks.io(.settingsSynced) }
-        } catch { Darwin.close(fd); throw error }
-        guard Darwin.close(fd) == 0 else { throw LibraryOpenError.filesystem("close write", errno) }
+            if settings { try hooks.failureInjector(.settingsWritten) }
+            try flush(descriptor)
+            if settings { try hooks.failureInjector(.settingsSynced) }
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
+        guard Darwin.close(descriptor) == 0 else { throw LibraryOpenError.filesystem("close write", errno) }
         try syncDirectory(url.deletingLastPathComponent())
     }
 
     func copy(_ source: URL, _ destination: URL) throws {
-        try hooks.io(.copy)
+        try hooks.failureInjector(.copy)
         // Streaming avoids mapping files that SQLite is about to replace or recover.
         guard try regular(source) else { throw LibraryOpenError.unsafeState("missing copy source") }
         let input = Darwin.open(source.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
@@ -190,9 +202,15 @@ struct RecoveryFiles: Sendable {
                 }
             }
             try flush(output)
-        } catch { Darwin.close(input); Darwin.close(output); throw error }
-        let inputResult = Darwin.close(input), inputError = errno
-        let outputResult = Darwin.close(output), outputError = errno
+        } catch {
+            Darwin.close(input)
+            Darwin.close(output)
+            throw error
+        }
+        let inputResult = Darwin.close(input)
+        let inputError = errno
+        let outputResult = Darwin.close(output)
+        let outputError = errno
         guard inputResult == 0 else { throw LibraryOpenError.filesystem("close source", inputError) }
         guard outputResult == 0 else { throw LibraryOpenError.filesystem("close copy", outputError) }
         try syncDirectory(destination.deletingLastPathComponent())
@@ -204,13 +222,16 @@ struct RecoveryFiles: Sendable {
         var hash = SHA256()
         do {
             while let bytes = try handle.read(upToCount: 65_536), !bytes.isEmpty { hash.update(data: bytes) }
-        } catch { try? handle.close(); throw error }
+        } catch {
+            try? handle.close()
+            throw error
+        }
         try handle.close()
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     func rename(_ source: URL, _ destination: URL) throws {
-        try hooks.io(.rename)
+        try hooks.failureInjector(.rename)
         guard try regular(source) else { throw LibraryOpenError.unsafeState("missing rename source") }
         _ = try regular(destination)
         guard Darwin.rename(source.path, destination.path) == 0 else {
@@ -226,11 +247,11 @@ struct RecoveryFiles: Sendable {
             for name in try FileManager.default.contentsOfDirectory(atPath: url.path).sorted() {
                 try remove(url.appendingPathComponent(name))
             }
-            try hooks.io(.unlink)
+            try hooks.failureInjector(.unlink)
             guard rmdir(url.path) == 0 else { throw LibraryOpenError.filesystem("rmdir", errno) }
         } else {
             _ = try regular(url)
-            try hooks.io(.unlink)
+            try hooks.failureInjector(.unlink)
             guard unlink(url.path) == 0 else { throw LibraryOpenError.filesystem("unlink", errno) }
         }
         try syncDirectory(url.deletingLastPathComponent())
@@ -240,16 +261,20 @@ struct RecoveryFiles: Sendable {
         guard let info = try status(url) else { return }
         if info.st_mode & S_IFMT == S_IFDIR {
             try directory(url)
-            let allowed: Set<String> = url.lastPathComponent == ".recovery-work"
+            let allowed: Set<String> =
+                url.lastPathComponent == ".recovery-work"
                 ? ["original", "candidate", "check"] : ["library.sqlite", "library.sqlite-journal", ".flushed"]
             for name in try FileManager.default.contentsOfDirectory(atPath: url.path) {
-                guard allowed.contains(name) else { throw LibraryOpenError.unsafeState("unexpected workspace artifact: \(name)") }
+                guard allowed.contains(name) else {
+                    throw LibraryOpenError.unsafeState("unexpected workspace artifact: \(name)")
+                }
                 let child = url.appendingPathComponent(name)
-                if url.lastPathComponent == ".recovery-work" { try directory(child) }
-                else { _ = try regular(child) }
+                if url.lastPathComponent == ".recovery-work" { try directory(child) } else { _ = try regular(child) }
                 try inspectTree(child)
             }
-        } else { _ = try regular(url) }
+        } else {
+            _ = try regular(url)
+        }
     }
 }
 
@@ -282,9 +307,10 @@ struct Recovery: Sendable {
 
     private func validate(_ intent: Intent) throws {
         guard intent.version == 1,
-              ((intent.mode == "create" && intent.original == nil && intent.journal == nil) ||
-              (intent.mode == "existing" && validHash(intent.original) && intent.journal == nil) ||
-              (intent.mode == "existing+journal" && validHash(intent.original) && validHash(intent.journal))) else {
+            (intent.mode == "create" && intent.original == nil && intent.journal == nil)
+                || (intent.mode == "existing" && validHash(intent.original) && intent.journal == nil)
+                || (intent.mode == "existing+journal" && validHash(intent.original) && validHash(intent.journal))
+        else {
             throw LibraryOpenError.unsafeState("malformed recovery intent")
         }
     }
@@ -294,8 +320,9 @@ struct Recovery: Sendable {
         guard try files.regular(url) else { return nil }
         let data = try files.read(url)
         guard data.count <= 4096 else { throw LibraryOpenError.unsafeState("oversized recovery marker") }
-        do { return try JSONDecoder().decode(type, from: data) }
-        catch { throw LibraryOpenError.unsafeState("malformed recovery marker: \(name)") }
+        do { return try JSONDecoder().decode(type, from: data) } catch {
+            throw LibraryOpenError.unsafeState("malformed recovery marker: \(name)")
+        }
     }
 
     private func marker<T: Encodable>(_ value: T, _ name: String) throws {
@@ -306,27 +333,35 @@ struct Recovery: Sendable {
     }
 
     private func currentIntent() throws -> Intent {
-        let exists = try files.regular(main), hasJournal = try files.regular(journal)
+        let exists = try files.regular(main)
+        let hasJournal = try files.regular(journal)
         guard exists || !hasJournal else { throw LibraryOpenError.unsafeState("orphan journal") }
-        return Intent(version: 1, mode: exists ? (hasJournal ? "existing+journal" : "existing") : "create",
-                      original: exists ? try files.digest(main) : nil,
-                      journal: hasJournal ? try files.digest(journal) : nil)
+        return Intent(
+            version: 1, mode: exists ? (hasJournal ? "existing+journal" : "existing") : "create",
+            original: exists ? try files.digest(main) : nil,
+            journal: hasJournal ? try files.digest(journal) : nil)
     }
 
     func inspect() throws {
         try files.directory(root)
-        let allowed: Set<String> = [".library-lock", "library.sqlite", "library.sqlite-journal", "settings.plist",
+        let allowed: Set<String> = [
+            ".library-lock", "library.sqlite", "library.sqlite-journal", "settings.plist",
             ".settings.tmp", ".recovery-work", ".library-session", ".recovery-intent", ".recovery-ready",
-            ".recovery-intent.tmp", ".recovery-ready.tmp", ".recovery-publish"]
+            ".recovery-intent.tmp", ".recovery-ready.tmp", ".recovery-publish"
+        ]
         for name in try FileManager.default.contentsOfDirectory(atPath: root.path) {
-            guard allowed.contains(name) else { throw LibraryOpenError.unsafeState("unsupported library artifact: \(name)") }
+            guard allowed.contains(name) else {
+                throw LibraryOpenError.unsafeState("unsupported library artifact: \(name)")
+            }
             if name == ".recovery-work" || name == ".library-session" {
                 try files.directory(path(name))
                 try files.inspectTree(path(name))
-            } else { _ = try files.regular(path(name)) }
+            } else {
+                _ = try files.regular(path(name))
+            }
         }
         if !(try files.regular(main)), try files.status(work) != nil,
-           !(try files.regular(path(".recovery-intent"))), !(try files.regular(path(".recovery-ready"))) {
+            !(try files.regular(path(".recovery-intent"))), !(try files.regular(path(".recovery-ready"))) {
             throw LibraryOpenError.unsafeState("orphan recovery workspace")
         }
         if try files.status(path(".library-session")) != nil {
@@ -338,8 +373,10 @@ struct Recovery: Sendable {
 
     private func validatePrivate(_ url: URL) async throws {
         let storage = try Storage(privateDatabaseAt: url)
-        do { _ = try await storage.snapshot() }
-        catch { await storage.close(); throw error }
+        do { _ = try await storage.snapshot() } catch {
+            await storage.close()
+            throw error
+        }
         await storage.close()
         guard !(try files.regular(URL(fileURLWithPath: url.path + "-journal"))) else {
             throw LibraryOpenError.unsafeState("validated candidate retains journal")
@@ -361,18 +398,23 @@ struct Recovery: Sendable {
         if let intent = try decode(Intent.self, ".recovery-intent") {
             try validate(intent)
             guard intent == original else { throw LibraryOpenError.unsafeState("intent/canonical identity mismatch") }
-        } else { try marker(original, ".recovery-intent") }
+        } else {
+            try marker(original, ".recovery-intent")
+        }
         try hooks.recovery(.intent)
         try await prepare(original, replacement: nil)
     }
 
     func publish(from privateDatabase: URL) async throws {
         guard !(try files.regular(path(".recovery-ready"))),
-              !(try files.regular(path(".recovery-intent"))) else {
+            !(try files.regular(path(".recovery-intent")))
+        else {
             throw LibraryOpenError.unsafeState("publication already in progress")
         }
         let original = try currentIntent()
-        guard original.mode == "existing" else { throw LibraryOpenError.unsafeState("publication lost canonical generation") }
+        guard original.mode == "existing" else {
+            throw LibraryOpenError.unsafeState("publication lost canonical generation")
+        }
         try marker(original, ".recovery-intent")
         try hooks.recovery(.intent)
         try await prepare(original, replacement: privateDatabase)
@@ -387,18 +429,24 @@ struct Recovery: Sendable {
         if intent.original != nil { try files.copy(main, path(".recovery-work/original/library.sqlite")) }
         if intent.journal != nil { try files.copy(journal, path(".recovery-work/original/library.sqlite-journal")) }
         try hooks.recovery(.copiedOriginal)
-        if let replacement { try files.copy(replacement, candidate) }
-        else if intent.original != nil {
+        if let replacement {
+            try files.copy(replacement, candidate)
+        } else if intent.original != nil {
             try files.copy(path(".recovery-work/original/library.sqlite"), candidate)
             if intent.journal != nil {
-                try files.copy(path(".recovery-work/original/library.sqlite-journal"),
-                               path(".recovery-work/candidate/library.sqlite-journal"))
+                try files.copy(
+                    path(".recovery-work/original/library.sqlite-journal"),
+                    path(".recovery-work/candidate/library.sqlite-journal"))
             }
-        } else { try Storage.createPrivateDatabase(at: candidate) }
+        } else {
+            try Storage.createPrivateDatabase(at: candidate)
+        }
         try hooks.recovery(.copiedWorking)
         try await validatePrivate(candidate)
         try hooks.recovery(.validated)
-        guard try currentIntent() == intent else { throw LibraryOpenError.unsafeState("canonical changed during preparation") }
+        guard try currentIntent() == intent else {
+            throw LibraryOpenError.unsafeState("canonical changed during preparation")
+        }
         let ready = Ready(version: 1, intent: intent, candidate: try files.digest(candidate))
         try marker(ready, ".recovery-ready")
         try hooks.recovery(.ready)
@@ -417,7 +465,8 @@ struct Recovery: Sendable {
         try files.directory(path(".recovery-work/original"))
         try files.directory(path(".recovery-work/candidate"))
         guard try files.digest(candidate) == ready.candidate,
-              !(try files.regular(path(".recovery-work/candidate/library.sqlite-journal"))) else {
+            !(try files.regular(path(".recovery-work/candidate/library.sqlite-journal")))
+        else {
             throw LibraryOpenError.unsafeState("candidate identity mismatch")
         }
         if let hash = ready.intent.original {
@@ -438,8 +487,10 @@ struct Recovery: Sendable {
         let currentJournal = try files.regular(journal) ? files.digest(journal) : nil
         let isOriginal = currentMain == ready.intent.original
         let isCandidate = currentMain == ready.candidate
-        guard (isOriginal && (currentJournal == nil || currentJournal == ready.intent.journal)) ||
-              (isCandidate && currentJournal == nil) else {
+        guard
+            (isOriginal && (currentJournal == nil || currentJournal == ready.intent.journal))
+                || (isCandidate && currentJournal == nil)
+        else {
             throw LibraryOpenError.unsafeState("conflicting canonical generation")
         }
         // Ready's candidate stays immutable; SQLite revalidates another disposable copy.
@@ -459,7 +510,9 @@ struct Recovery: Sendable {
             try files.copy(candidate, path(".recovery-publish"))
             try hooks.recovery(.publicationCopied)
             try files.rename(path(".recovery-publish"), main)
-        } else { try hooks.recovery(.publicationCopied) }
+        } else {
+            try hooks.recovery(.publicationCopied)
+        }
         try hooks.recovery(.published)
         guard try files.digest(main) == ready.candidate, !(try files.regular(journal)) else {
             throw LibraryOpenError.unsafeState("published generation mismatch")
@@ -473,7 +526,8 @@ struct Recovery: Sendable {
 
     func newSession() throws -> URL {
         guard !(try files.regular(path(".recovery-ready"))),
-              !(try files.regular(path(".recovery-intent"))) else {
+            !(try files.regular(path(".recovery-intent")))
+        else {
             throw LibraryOpenError.unsafeState("session before publication complete")
         }
         let session = path(".library-session")
@@ -491,34 +545,37 @@ struct Recovery: Sendable {
         do {
             let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
             guard let dictionary = object as? [String: Any], Set(dictionary.keys) == ["version", "firstWeekday"],
-                  let version = dictionary["version"] as? NSNumber,
-                  let weekday = dictionary["firstWeekday"] as? NSNumber,
-                  CFGetTypeID(version) != CFBooleanGetTypeID(), CFGetTypeID(weekday) != CFBooleanGetTypeID(),
-                  CFNumberIsFloatType(unsafeBitCast(version, to: CFNumber.self)) == false,
-                  CFNumberIsFloatType(unsafeBitCast(weekday, to: CFNumber.self)) == false,
-                  version.intValue == 1, (1...7).contains(weekday.intValue),
-                  version == NSNumber(value: 1), weekday == NSNumber(value: weekday.intValue) else {
+                let version = dictionary["version"] as? NSNumber,
+                let weekday = dictionary["firstWeekday"] as? NSNumber,
+                CFGetTypeID(version) != CFBooleanGetTypeID(), CFGetTypeID(weekday) != CFBooleanGetTypeID(),
+                CFNumberIsFloatType(unsafeBitCast(version, to: CFNumber.self)) == false,
+                CFNumberIsFloatType(unsafeBitCast(weekday, to: CFNumber.self)) == false,
+                version.intValue == 1, (1...7).contains(weekday.intValue),
+                version == NSNumber(value: 1), weekday == NSNumber(value: weekday.intValue)
+            else {
                 throw LibraryAccessError.invalidSettings("expected integer version 1 and weekday 1...7")
             }
             return LibrarySettings(firstWeekday: weekday.intValue)
-        } catch let error as LibraryAccessError { throw error }
-        catch { throw LibraryAccessError.invalidSettings("malformed settings.plist") }
+        } catch let error as LibraryAccessError { throw error } catch {
+            throw LibraryAccessError.invalidSettings("malformed settings.plist")
+        }
     }
 
     func saveSettings(_ day: Int) throws -> LibrarySettings {
         guard (1...7).contains(day) else { throw LibraryAccessError.invalidSettings("weekday must be 1...7") }
         _ = try settings()
-        let data = try PropertyListSerialization.data(fromPropertyList: ["version": 1, "firstWeekday": day],
-                                                       format: .xml, options: 0)
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: ["version": 1, "firstWeekday": day],
+            format: .xml, options: 0)
         let temp = path(".settings.tmp")
         try files.remove(temp)
         try files.write(data, to: temp, settings: true)
         // Once rename is attempted, even a directory-barrier failure is uncertain.
         do {
             try files.rename(temp, path("settings.plist"))
-            try hooks.io(.settingsRenamed)
+            try hooks.failureInjector(.settingsRenamed)
             try files.syncDirectory(root)
-            try hooks.io(.settingsDirectorySynced)
+            try hooks.failureInjector(.settingsDirectorySynced)
         } catch { throw LibraryAccessError.publicationIndeterminate }
         return LibrarySettings(firstWeekday: day)
     }

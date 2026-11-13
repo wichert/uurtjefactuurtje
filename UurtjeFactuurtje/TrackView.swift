@@ -1,5 +1,5 @@
-import SwiftUI
 import LibraryStore
+import SwiftUI
 
 struct TrackView: View {
     @Bindable var presentation: TrackPresentation
@@ -73,8 +73,9 @@ struct TrackView: View {
                         .focused($tableFocused)
                         .onKeyPress(.return) {
                             guard case .task(let id) = presentation.selectedRow,
-                                  tableFocused, presentation.isVisible(.task(id)),
-                                  presentation.eligible(id), !model.isBusy else { return .ignored }
+                                tableFocused, presentation.isVisible(.task(id)),
+                                presentation.eligible(id), !model.isBusy
+                            else { return .ignored }
                             presentation.timer(.start(taskID: id))
                             return .handled
                         }
@@ -107,8 +108,9 @@ struct TrackView: View {
 
     private var canCreateTask: Bool {
         guard let row = presentation.selectedRow, presentation.isVisible(row),
-              let id = presentation.selectedProjectID,
-              let project = presentation.projects.first(where: { $0.id == id }) else { return false }
+            let id = presentation.selectedProjectID,
+            let project = presentation.projects.first(where: { $0.id == id })
+        else { return false }
         return !project.isArchived
     }
     private func newTask() {
@@ -149,8 +151,9 @@ struct TrackView: View {
     }
     private func reveal(_ scroll: ScrollViewProxy) {
         guard presentation.destination == .track, presentation.sheet == nil,
-              let request = presentation.reveal,
-              presentation.selectedRow == .task(request.taskID) else { return }
+            let request = presentation.reveal,
+            presentation.selectedRow == .task(request.taskID)
+        else { return }
         let target = TrackRowID.task(request.taskID)
         scroll.scrollTo(target)
         guard mountedRows.contains(target) else { return }
@@ -160,7 +163,7 @@ struct TrackView: View {
 
     @ViewBuilder private var timerStrip: some View {
         if let active = model.snapshot?.activeTimer,
-           let row = model.snapshot?.entries.first(where: { $0.id == active.entryID }) {
+            let row = model.snapshot?.entries.first(where: { $0.id == active.entryID }) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(presentation.path(row.taskID)).font(.headline)
@@ -266,9 +269,9 @@ private struct BudgetRowsView: View {
                 switch Result(catching: {
                     (try model.budgetUsage(), try BudgetRules.allocations(in: snapshot))
                 }) {
-                case let .success(projection):
+                case .success(let projection):
                     success(projection, snapshot: snapshot)
-                case let .failure(error):
+                case .failure(let error):
                     Text("Budget projection failed: \(String(describing: error))")
                         .textSelection(.enabled)
                 }
@@ -289,13 +292,15 @@ private struct BudgetRowsView: View {
         }
         VStack(alignment: .leading, spacing: 8) {
             if !allocations.isEmpty {
-                Text("""
+                Text(
+                    """
                     Lifetime use includes descendants; open use is provisional when safe, otherwise \
                     checkpoint-bounded. Pending sleep is excluded. Allocation reserves budgets, not time used.
-                    """)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    """
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(allocations, id: \.taskID) { item in
                 BudgetRowView(
@@ -320,7 +325,8 @@ private struct BudgetRowView: View {
         let limitSeconds = Decimal(item.limitMinutes) * 60
         let ratio = min(Decimal(1), max(.zero, used / limitSeconds))
         let difference = limitSeconds - used
-        let balance = difference < 0
+        let balance =
+            difference < 0
             ? "\(RateInput.text(-difference)) seconds over budget"
             : "\(RateInput.text(difference)) seconds remaining"
         let exact = "\(RateInput.text(used)) / \(limitSeconds) seconds used; \(balance)"
@@ -339,11 +345,13 @@ private struct BudgetRowView: View {
                 .accessibilityLabel("Lifetime budget progress")
                 .accessibilityValue(exact)
             if band != .none {
-                Text(band == .hundred
-                    ? "100% reached — tracking may continue"
-                    : "80% reached — tracking may continue")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    band == .hundred
+                        ? "100% reached — tracking may continue"
+                        : "80% reached — tracking may continue"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             if hasChildren {
                 allocationHelp

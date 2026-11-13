@@ -30,19 +30,22 @@ import LibraryStore
             sleeping: sleeping || host.sleeping,
         )
         if !uncertain && !unavailable && snapshot?.pendingSleepIntervals.isEmpty == false {
-            details.append("Saved pending sleep time will remain unbilled. "
-                + "Defer its review until next launch; Quit will not include or discard it.")
+            details.append(
+                "Saved pending sleep time will remain unbilled. "
+                    + "Defer its review until next launch; Quit will not include or discard it.")
         }
         if draft {
-            details.append("The open unsent editor draft, including any suspended task draft, "
-                + "will be discarded only if Quit succeeds. Cancel keeps the draft and window open. "
-                + "Accepted operations are not discarded.")
+            details.append(
+                "The open unsent editor draft, including any suspended task draft, "
+                    + "will be discarded only if Quit succeeds. Cancel keeps the draft and window open. "
+                    + "Accepted operations are not discarded.")
         }
         let alert = NSAlert()
         alert.messageText = draft ? "Discard unsent draft and quit?" : "Quit UurtjeFactuurtje?"
         alert.informativeText = details.joined(separator: "\n\n")
-        alert.addButton(withTitle: draft ? "Discard Draft & Quit" :
-            (running && !uncertain && !unavailable ? "Stop & Quit" : "Quit"))
+        alert.addButton(
+            withTitle: draft ? "Discard Draft & Quit" : (running && !uncertain && !unavailable ? "Stop & Quit" : "Quit")
+        )
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
     }
@@ -56,18 +59,21 @@ import LibraryStore
     ) -> [String] {
         var details: [String] = []
         if uncertain {
-            details.append("The last change may or may not have been saved. "
-                + "Quit will close the library without another write. On next launch, "
-                + "inspect entries and the timer before deciding on another action; "
-                + "do not repeat the uncertain change.")
+            details.append(
+                "The last change may or may not have been saved. "
+                    + "Quit will close the library without another write. On next launch, "
+                    + "inspect entries and the timer before deciding on another action; "
+                    + "do not repeat the uncertain change.")
         } else if unavailable {
-            details.append("The library is unavailable. Quit will close its resources without another write. "
-                + "No additional save or Stop is confirmed; inspect the library when it can be opened again.")
+            details.append(
+                "The library is unavailable. Quit will close its resources without another write. "
+                    + "No additional save or Stop is confirmed; inspect the library when it can be opened again.")
         } else if running {
             details.append("Your running timer will be stopped once before closing the library.")
         } else if snapshot?.activeTimer != nil || sleeping {
-            details.append("Interrupted or sleeping tracking will be left unchanged for review on next launch. "
-                + "Quit will not invent an end or wake time.")
+            details.append(
+                "Interrupted or sleeping tracking will be left unchanged for review on next launch. "
+                    + "Quit will not invent an end or wake time.")
         }
         return details
     }
@@ -133,21 +139,23 @@ import LibraryStore
         }
         schedule()
         let center = NSWorkspace.shared.notificationCenter
-        observers.append(center.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: .main,
-        ) { [weak self] _ in
-            // AppKit posts on the main queue: latch before any asynchronous hop.
-            MainActor.assumeIsolated { self?.willSleep() }
-        })
-        observers.append(center.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: .main,
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.didWake(at: Date()) }
-        })
+        observers.append(
+            center.addObserver(
+                forName: NSWorkspace.willSleepNotification,
+                object: nil,
+                queue: .main,
+            ) { [weak self] _ in
+                // AppKit posts on the main queue: latch before any asynchronous hop.
+                MainActor.assumeIsolated { self?.willSleep() }
+            })
+        observers.append(
+            center.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main,
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.didWake(at: Date()) }
+            })
         host.reopen()
     }
     private func schedule() {
@@ -175,12 +183,14 @@ import LibraryStore
 
     func budgetTick() {
         guard host.acceptingMutations, !sleeping, case .running = host.workspace.timerStatus,
-              let usage = try? host.workspace.budgetUsage(),
-              let snapshot = host.workspace.snapshot else { return }
+            let usage = try? host.workspace.budgetUsage(),
+            let snapshot = host.workspace.snapshot
+        else { return }
         // A crossing must be committed before it can become a notification.
         if snapshot.tasks.contains(where: { task in
             guard let limit = task.budgetMinutes,
-                  let seconds = usage[task.id] else { return false }
+                let seconds = usage[task.id]
+            else { return false }
             let band = BudgetRules.band(used: seconds, budget: limit)
             return band.rawValue > task.lastWarnedThreshold.rawValue
         }) {
@@ -205,7 +215,8 @@ import LibraryStore
     static func wholeSecond(_ date: Date) -> Int64? {
         let value = floor(date.timeIntervalSince1970)
         guard value.isFinite, value >= Double(Int64.min),
-              value < Double(Int64.max) else { return nil }
+            value < Double(Int64.max)
+        else { return nil }
         return Int64(value)
     }
     func didWake(at date: Date) {
@@ -230,10 +241,11 @@ import LibraryStore
                 generation: generation,
                 observedAt: instant,
             )
-            host.retain(Task { @MainActor [host] in
-                await observation.value
-                host.requestAutoReviewIfNeeded()
-            })
+            host.retain(
+                Task { @MainActor [host] in
+                    await observation.value
+                    host.requestAutoReviewIfNeeded()
+                })
         } else {
             host.requestAutoReviewIfNeeded()
         }
@@ -303,7 +315,8 @@ import LibraryStore
             wasSleeping: sleeping || host.sleeping,
         )
         quitReview = review
-        let needsConfirmation = host.track.sheet != nil
+        let needsConfirmation =
+            host.track.sheet != nil
             || host.track.suspendedTaskDraft != nil
             || review.snapshot?.activeTimer != nil
             || review.snapshot?.pendingSleepIntervals.isEmpty == false
@@ -326,7 +339,8 @@ import LibraryStore
     private func stopRunningTimerForQuit() async -> Bool {
         guard let review = quitReview else { return false }
         guard !review.uncertain, host.available, !review.wasSleeping,
-              case .running = host.workspace.timerStatus else { return true }
+            case .running = host.workspace.timerStatus
+        else { return true }
         guard let stop = host.track.ownedStop else {
             host.track.failure = """
                 The running timer could not be safely identified. Inspect it before trying Quit again.
@@ -346,11 +360,12 @@ import LibraryStore
         }
         await host.drain()
         guard !host.track.acceptedWork, host.available,
-              !host.hasUncertainPublication, !sleeping, !host.sleeping,
-              host.workspace.timerLifecycleGate.currentGeneration == review.generation,
-              host.workspace.snapshot?.activeTimer == nil,
-              host.workspace.snapshot?.pendingSleepIntervals
-                == review.snapshot?.pendingSleepIntervals else {
+            !host.hasUncertainPublication, !sleeping, !host.sleeping,
+            host.workspace.timerLifecycleGate.currentGeneration == review.generation,
+            host.workspace.snapshot?.activeTimer == nil,
+            host.workspace.snapshot?.pendingSleepIntervals
+                == review.snapshot?.pendingSleepIntervals
+        else {
             host.track.failure = """
                 Time or library state changed while stopping. Inspect it before choosing Quit again; \
                 no Stop was repeated.

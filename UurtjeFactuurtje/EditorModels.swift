@@ -23,9 +23,15 @@ struct TaskRow: Identifiable {
     let isLeaf: Bool
     var id: UUID { task.id }
 }
-struct TaskReveal: Identifiable { let id: UUID; let taskID: UUID }
+struct TaskReveal: Identifiable {
+    let id: UUID
+    let taskID: UUID
+}
 enum TrackSheet: Identifiable {
-    case project(ProjectDraft), task(TaskDraft), correction(CorrectionRoute), timeReview(UUID)
+    case project(ProjectDraft)
+    case task(TaskDraft)
+    case correction(CorrectionRoute)
+    case timeReview(UUID)
     var id: UUID {
         switch self {
         case .project(let draft): draft.id
@@ -131,7 +137,9 @@ struct TaskDraft: Identifiable {
         if snapshot.tasks.contains(where: {
             $0.id != id && $0.projectID == project && $0.parentTaskID == parent
                 && NameKey.make($0.name) == NameKey.make(name)
-        }) { return "A task with this name already exists under this parent. Choose a different name." }
+        }) {
+            return "A task with this name already exists under this parent. Choose a different name."
+        }
         if budgetEnabled && parsedBudget == nil {
             return "Enter positive budget hours that represent a whole number of minutes."
         }
@@ -139,16 +147,21 @@ struct TaskDraft: Identifiable {
     }
     mutating func relocate(projectID: UUID, parentID: UUID?) {
         if self.projectID != projectID || self.parentID != parentID { migrationAccepted = false }
-        self.projectID = projectID; self.parentID = parentID
+        self.projectID = projectID
+        self.parentID = parentID
     }
     func request(start: Bool) -> TaskCreationRequest {
-        TaskCreationRequest(id: id, projectID: projectID, parentID: parentID,
-                            name: name, budgetMinutes: parsedBudget,
-                            confirmMigration: migrationAccepted, start: start)
+        TaskCreationRequest(
+            id: id, projectID: projectID, parentID: parentID,
+            name: name, budgetMinutes: parsedBudget,
+            confirmMigration: migrationAccepted, start: start)
     }
 }
 struct CorrectionRoute: Identifiable {
-    enum Mode { case add(taskID: UUID?), edit(entryID: UUID) }
+    enum Mode {
+        case add(taskID: UUID?)
+        case edit(entryID: UUID)
+    }
     let id: UUID
     let mode: Mode
 }

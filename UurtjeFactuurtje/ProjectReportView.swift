@@ -1,5 +1,5 @@
-import SwiftUI
 import LibraryStore
+import SwiftUI
 
 private struct ReportTaskRow: Identifiable {
     let task: TaskRecord
@@ -35,9 +35,14 @@ private struct ReportTaskRow: Identifiable {
         VStack(alignment: .leading) {
             HStack {
                 if reports.returnToWeek != nil { Button("Back to week") { reports.backToWeek() } }
-                Picker("Project", selection: Binding<UUID?>(get: { reports.selectedProjectID }, set: { id in
-                    if let id { reports.openProject(id) }
-                })) {
+                Picker(
+                    "Project",
+                    selection: Binding<UUID?>(
+                        get: { reports.selectedProjectID },
+                        set: { id in
+                            if let id { reports.openProject(id) }
+                        })
+                ) {
                     Text("Choose project").tag(UUID?.none)
                     ForEach(reports.visibleProjects) { project in
                         Text(project.name + (project.isArchived ? " (archived)" : "")).tag(Optional(project.id))
@@ -82,11 +87,13 @@ private struct ReportTaskRow: Identifiable {
                 let total = ReportFormatting.amount(totalAmount, locale: locale)
                 Text("Period total: \(totalTime); \(total)")
                 let rate = NSDecimalNumber(decimal: report.project.hourlyRate).stringValue
-                Text("""
+                Text(
+                    """
                     Current rate: \(rate) \(report.project.currencyCode) per hour. Current rates apply to all history; \
                     rows round independently, without conversion.
-                    """)
-                    .font(.caption)
+                    """
+                )
+                .font(.caption)
                 if report.hasOpenEntry {
                     Text(reports.openLabel(entryID: reports.track.workspace.snapshot?.activeTimer?.entryID))
                 }

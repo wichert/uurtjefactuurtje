@@ -31,7 +31,8 @@ public enum ReportCalendar {
 
     static func bounds(_ interval: DateInterval) throws -> ReportBounds {
         guard let start = Int64(exactly: interval.start.timeIntervalSince1970),
-              let end = Int64(exactly: interval.end.timeIntervalSince1970) else {
+            let end = Int64(exactly: interval.end.timeIntervalSince1970)
+        else {
             throw ReportError.intervalOverflow
         }
         return try ReportBounds(start: start, end: end)
@@ -52,8 +53,9 @@ public enum ReportCalendar {
         guard let date = calendar.date(from: civil) else { throw ReportError.invalidDate }
         let actual = calendar.dateComponents([.era, .year, .month, .day, .isLeapMonth], from: date)
         guard actual.year == civil.year, actual.month == civil.month, actual.day == civil.day,
-              civil.era == nil || actual.era == civil.era,
-              civil.isLeapMonth == nil || actual.isLeapMonth == civil.isLeapMonth else {
+            civil.era == nil || actual.era == civil.era,
+            civil.isLeapMonth == nil || actual.isLeapMonth == civil.isLeapMonth
+        else {
             throw ReportError.invalidDate
         }
         return date
@@ -71,7 +73,13 @@ public enum ReportCalendar {
         var nominal = calendar
         nominal.timeZone = TimeZone(secondsFromGMT: 0)!
         let offset = (calendar.component(.weekday, from: anchor) - firstWeekday + 7) % 7
-        guard let start = nominal.date(byAdding: .day, value: -offset, to: try civilDate(civil, calendar: nominal)) else {
+        guard
+            let start = nominal.date(
+                byAdding: .day, value: -offset,
+                to: try civilDate(
+                    civil,
+                    calendar: nominal))
+        else {
             throw ReportError.invalidDate
         }
         return start
@@ -93,20 +101,23 @@ public enum ReportCalendar {
         throw ReportError.invalidDate
     }
 
-    public static func bounds(for period: ReportPeriod, now: Int64, calendar: Calendar,
-                              firstWeekday: Int = 2) throws -> ReportBounds? {
+    public static func bounds(
+        for period: ReportPeriod, now: Int64, calendar: Calendar,
+        firstWeekday: Int = 2
+    ) throws -> ReportBounds? {
         guard (1...7).contains(firstWeekday) else { throw ReportError.invalidDate }
         var calendar = calendar
         calendar.firstWeekday = firstWeekday
         switch period {
         case .allTime: return nil
-        case let .custom(first, last):
+        case .custom(let first, let last):
             let firstDate = try civilDate(first, calendar: calendar)
             let lastDate = try civilDate(last, calendar: calendar)
             guard firstDate <= lastDate else { throw ReportError.reversedDates }
-            return try ReportBounds(start: day(firstDate, calendar: calendar).start,
-                                    end: day(lastDate, calendar: calendar).end)
-        case let .day(containing): return try day(date(containing), calendar: calendar)
+            return try ReportBounds(
+                start: day(firstDate, calendar: calendar).start,
+                end: day(lastDate, calendar: calendar).end)
+        case .day(let containing): return try day(date(containing), calendar: calendar)
         case .thisWeek:
             let start = try nominalWeekStart(containing: now, calendar: calendar, firstWeekday: firstWeekday)
             var nominal = calendar
@@ -129,14 +140,15 @@ public struct ReportValue: Equatable, Sendable {
     public static let zero = ReportValue(closedSeconds: 0, provisionalSeconds: 0, totalSeconds: 0)
 
     fileprivate func adding(_ other: ReportValue) throws -> ReportValue {
-        func sum(_ a: Int64, _ b: Int64) throws -> Int64 {
-            let (value, overflow) = a.addingReportingOverflow(b)
+        func sum(_ left: Int64, _ right: Int64) throws -> Int64 {
+            let (value, overflow) = left.addingReportingOverflow(right)
             guard !overflow else { throw ReportError.intervalOverflow }
             return value
         }
-        return try ReportValue(closedSeconds: sum(closedSeconds, other.closedSeconds),
-                               provisionalSeconds: sum(provisionalSeconds, other.provisionalSeconds),
-                               totalSeconds: sum(totalSeconds, other.totalSeconds))
+        return try ReportValue(
+            closedSeconds: sum(closedSeconds, other.closedSeconds),
+            provisionalSeconds: sum(provisionalSeconds, other.provisionalSeconds),
+            totalSeconds: sum(totalSeconds, other.totalSeconds))
     }
 }
 
@@ -216,19 +228,25 @@ public enum ReportProjection {
             rows = try snapshot.entries.map { entry in
                 let provisional = entry.endAt == nil
                 let end: Int64
-                if let closed = entry.endAt { end = closed }
-                else {
+                if let closed = entry.endAt {
+                    end = closed
+                } else {
                     guard let active = snapshot.activeTimer, active.entryID == entry.id,
-                          liveEnd == nil || liveEnd! >= active.checkpointAt else {
+                        liveEnd == nil || liveEnd! >= active.checkpointAt
+                    else {
                         throw ReportError.invalidActiveEntry
                     }
                     end = liveEnd ?? active.checkpointAt
                 }
                 let interval: EntryInterval?
-                if provisional && end == entry.startAt { interval = nil }
-                else {
-                    do { interval = try EntryInterval(startAt: entry.startAt, endAt: end) }
-                    catch { throw ReportError.intervalOverflow }
+                if provisional && end == entry.startAt {
+                    interval = nil
+                } else {
+                    do {
+                        interval = try EntryInterval(
+                            startAt: entry.startAt,
+                            endAt: end)
+                    } catch { throw ReportError.intervalOverflow }
                 }
                 return ReportEntryRow(entry: entry, included: interval, isProvisional: provisional)
             }
@@ -246,18 +264,22 @@ public enum ReportProjection {
     }
 
     private static func value(_ row: ReportEntryRow) -> ReportValue {
-        ReportValue(closedSeconds: row.isProvisional ? 0 : row.seconds,
-                    provisionalSeconds: row.isProvisional ? row.seconds : 0, totalSeconds: row.seconds)
+        ReportValue(
+            closedSeconds: row.isProvisional ? 0 : row.seconds,
+            provisionalSeconds: row.isProvisional ? row.seconds : 0, totalSeconds: row.seconds)
     }
 
     private static func ordered(_ left: (String, UUID), _ right: (String, UUID)) -> Bool {
-        let a = NameKey.make(left.0), b = NameKey.make(right.0)
-        return a == b ? left.1.uuidString < right.1.uuidString : a < b
+        let leftKey = NameKey.make(left.0)
+        let rightKey = NameKey.make(right.0)
+        return leftKey == rightKey ? left.1.uuidString < right.1.uuidString : leftKey < rightKey
     }
 
-    public static func project(_ projectID: UUID, in snapshot: LibrarySnapshot,
-                               bounds: ReportBounds?, calendar: Calendar,
-                               liveEnd: Int64? = nil, scopeTaskID: UUID? = nil) throws -> ProjectReport {
+    public static func project(
+        _ projectID: UUID, in snapshot: LibrarySnapshot,
+        bounds: ReportBounds?, calendar: Calendar,
+        liveEnd: Int64? = nil, scopeTaskID: UUID? = nil
+    ) throws -> ProjectReport {
         guard let project = snapshot.projects.first(where: { $0.id == projectID }) else {
             throw ReportError.unavailableProject
         }
@@ -269,26 +291,30 @@ public enum ReportProjection {
                 throw ReportError.invalidHierarchy
             }
             scopeTask = task
-            let children = Dictionary(grouping: snapshot.tasks.compactMap { task in
-                task.parentTaskID.map { (parent: $0, child: task.id) }
-            }, by: \.parent)
+            let children = Dictionary(
+                grouping: snapshot.tasks.compactMap { task in
+                    task.parentTaskID.map { (parent: $0, child: task.id) }
+                }, by: \.parent)
             var queue = [scopeTaskID]
             included = [scopeTaskID]
             var index = 0
             while index < queue.count {
-                for child in children[queue[index], default: []] {
-                    if included.insert(child.child).inserted { queue.append(child.child) }
+                for child in children[queue[index], default: []] where included.insert(child.child).inserted {
+                    queue.append(child.child)
                 }
                 index += 1
             }
-        } else { scopeTask = nil }
+        } else {
+            scopeTask = nil
+        }
         let tasks = snapshot.tasks.filter { included.contains($0.id) }.sorted {
             ordered(($0.name, $0.id), ($1.name, $1.id))
         }
         var totals = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, ReportValue.zero) })
         let parents = Set(tasks.compactMap(\.parentTaskID))
-        var rows = Dictionary(uniqueKeysWithValues: tasks.filter { !parents.contains($0.id) }
-            .map { ($0.id, [ReportEntryRow]()) })
+        var rows = Dictionary(
+            uniqueKeysWithValues: tasks.filter { !parents.contains($0.id) }
+                .map { ($0.id, [ReportEntryRow]()) })
         var total = ReportValue.zero
         var hasOpen = false
         for original in prepared.rows where included.contains(original.entry.taskID) {
@@ -305,27 +331,32 @@ public enum ReportProjection {
         }
         for id in rows.keys {
             rows[id]!.sort {
-                let a = $0.included?.startAt ?? $0.entry.startAt
-                let b = $1.included?.startAt ?? $1.entry.startAt
-                return a == b ? $0.id.uuidString < $1.id.uuidString : a < b
+                let left = $0.included?.startAt ?? $0.entry.startAt
+                let right = $1.included?.startAt ?? $1.entry.startAt
+                return left == right ? $0.id.uuidString < $1.id.uuidString : left < right
             }
         }
         let usage = try BudgetRules.usage(in: snapshot, liveEnd: liveEnd)
             .filter { included.contains($0.key) }
-        let bands = Dictionary(uniqueKeysWithValues: tasks.map {
-            ($0.id, BudgetRules.band(used: usage[$0.id, default: 0], budget: $0.budgetMinutes))
-        })
-        return ProjectReport(project: project, scopeTask: scopeTask, bounds: bounds,
+        let bands = Dictionary(
+            uniqueKeysWithValues: tasks.map {
+                ($0.id, BudgetRules.band(used: usage[$0.id, default: 0], budget: $0.budgetMinutes))
+            })
+        return ProjectReport(
+            project: project, scopeTask: scopeTask, bounds: bounds,
             timeZoneIdentifier: calendar.timeZone.identifier, tasks: tasks, total: total,
             taskTotals: totals, lifetimeUsage: usage, displayBands: bands,
             entriesByLeaf: rows, hasOpenEntry: hasOpen)
     }
 
-    public static func week(in snapshot: LibrarySnapshot, containing: Int64, calendar: Calendar,
-                            firstWeekday: Int = 2, includeArchived: Bool = false,
-                            liveEnd: Int64? = nil) throws -> WeeklyReport {
-        let bounds = try ReportCalendar.bounds(for: .thisWeek, now: containing, calendar: calendar,
-                                              firstWeekday: firstWeekday)!
+    public static func week(
+        in snapshot: LibrarySnapshot, containing: Int64, calendar: Calendar,
+        firstWeekday: Int = 2, includeArchived: Bool = false,
+        liveEnd: Int64? = nil
+    ) throws -> WeeklyReport {
+        let bounds = try ReportCalendar.bounds(
+            for: .thisWeek, now: containing, calendar: calendar,
+            firstWeekday: firstWeekday)!
         let prepared = try Prepared(snapshot, liveEnd: liveEnd)
         let projects = snapshot.projects.filter { includeArchived || !$0.isArchived }.sorted {
             ordered(($0.name, $0.id), ($1.name, $1.id))
@@ -336,23 +367,28 @@ public enum ReportProjection {
         var days: [WeeklyReportDay] = []
         var nominalCalendar = calendar
         nominalCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let nominalStart = try ReportCalendar.nominalWeekStart(containing: containing, calendar: calendar,
-                                                               firstWeekday: firstWeekday)
+        let nominalStart = try ReportCalendar.nominalWeekStart(
+            containing: containing, calendar: calendar,
+            firstWeekday: firstWeekday)
         for offset in 0..<7 {
             guard let nominal = nominalCalendar.date(byAdding: .day, value: offset, to: nominalStart) else {
                 throw ReportError.invalidDate
             }
             let civil = nominalCalendar.dateComponents([.era, .year, .month, .day, .isLeapMonth], from: nominal)
             let dayBounds: ReportBounds?
-            do { dayBounds = try ReportCalendar.day(ReportCalendar.civilDate(civil, calendar: calendar), calendar: calendar) }
-            catch ReportError.invalidDate { dayBounds = nil }
+            do {
+                dayBounds = try ReportCalendar.day(
+                    ReportCalendar.civilDate(civil, calendar: calendar),
+                    calendar: calendar)
+            } catch ReportError.invalidDate { dayBounds = nil }
             var cells = zero
             var open = Set<UUID>()
             var dayTotal = ReportValue.zero
             if let dayBounds {
                 for original in prepared.rows {
                     guard let project = prepared.tasks[original.entry.taskID]?.projectID, cells[project] != nil,
-                          let row = try prepared.clipped(original, to: dayBounds) else { continue }
+                        let row = try prepared.clipped(original, to: dayBounds)
+                    else { continue }
                     let contribution = value(row)
                     cells[project] = try cells[project]!.adding(contribution)
                     dayTotal = try dayTotal.adding(contribution)
@@ -361,12 +397,15 @@ public enum ReportProjection {
             }
             for (id, cell) in cells { totals[id] = try totals[id]!.adding(cell) }
             total = try total.adding(dayTotal)
-            days.append(WeeklyReportDay(date: civil, bounds: dayBounds, projects: cells,
-                                        openProjectIDs: open, total: dayTotal))
+            days.append(
+                WeeklyReportDay(
+                    date: civil, bounds: dayBounds, projects: cells,
+                    openProjectIDs: open, total: dayTotal))
         }
-        return WeeklyReport(bounds: bounds, timeZoneIdentifier: calendar.timeZone.identifier,
-                            projects: projects, days: days, projectTotals: totals, total: total,
-                            hasOpenEntry: days.contains { !$0.openProjectIDs.isEmpty })
+        return WeeklyReport(
+            bounds: bounds, timeZoneIdentifier: calendar.timeZone.identifier,
+            projects: projects, days: days, projectTotals: totals, total: total,
+            hasOpenEntry: days.contains { !$0.openProjectIDs.isEmpty })
     }
 
     public static func amount(seconds: Int64, project: Project) throws -> CurrencyAmount {
@@ -399,8 +438,11 @@ public enum ReportProjection {
                 throw ReportError.moneyOverflow
             }
             let coefficient = Digits(String(parts.joined()))
-            terms.append((coefficient.multiplied(by: Digits(String(seconds))),
-                          (parts.count == 2 ? parts[1].count : 0) - precision))
+            terms.append(
+                (
+                    coefficient.multiplied(by: Digits(String(seconds))),
+                    (parts.count == 2 ? parts[1].count : 0) - precision
+                ))
         }
         let scale = max(0, terms.map(\.scale).max() ?? 0)
         var numerator = Digits("0")
@@ -416,9 +458,15 @@ public enum ReportProjection {
 
 // Decimal supplies the rate digits; base-ten integers keep products beyond its precision exact.
 private struct Digits {
-    private var digits: [Int] // least significant first
-    init(_ text: String) { digits = text.utf8.reversed().map { Int($0 - 48) }; normalize() }
-    private init(_ digits: [Int]) { self.digits = digits; normalize() }
+    private var digits: [Int]  // least significant first
+    init(_ text: String) {
+        digits = text.utf8.reversed().map { Int($0 - 48) }
+        normalize()
+    }
+    private init(_ digits: [Int]) {
+        self.digits = digits
+        normalize()
+    }
     private mutating func normalize() {
         while digits.count > 1 && digits.last == 0 { digits.removeLast() }
         if digits.isEmpty { digits = [0] }
@@ -438,17 +486,22 @@ private struct Digits {
     }
     func multiplied(by other: Digits) -> Digits {
         var result = Array(repeating: 0, count: digits.count + other.digits.count)
-        for i in digits.indices {
-            for j in other.digits.indices { result[i + j] += digits[i] * other.digits[j] }
+        for index in digits.indices {
+            for otherIndex in other.digits.indices {
+                result[index + otherIndex] += digits[index] * other.digits[otherIndex]
+            }
         }
-        for i in 0..<(result.count - 1) { result[i + 1] += result[i] / 10; result[i] %= 10 }
+        for index in 0..<(result.count - 1) {
+            result[index + 1] += result[index] / 10
+            result[index] %= 10
+        }
         return Digits(result)
     }
     mutating func divide(by divisor: Int) -> Int {
         var remainder = 0
-        for i in digits.indices.reversed() {
-            let value = remainder * 10 + digits[i]
-            digits[i] = value / divisor
+        for index in digits.indices.reversed() {
+            let value = remainder * 10 + digits[index]
+            digits[index] = value / divisor
             remainder = value % divisor
         }
         normalize()

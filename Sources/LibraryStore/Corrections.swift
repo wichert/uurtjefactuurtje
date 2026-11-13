@@ -9,21 +9,23 @@ public enum WallTimeResolution: Equatable, Sendable {
 public enum CorrectionClock {
     public static func resolve(_ components: DateComponents, calendar: Calendar) -> WallTimeResolution {
         guard calendar.identifier == .gregorian,
-              components.calendar == nil || components.calendar?.identifier == .gregorian,
-              components.timeZone == nil || components.timeZone == calendar.timeZone,
-              components.era == nil || components.era == 1,
-              let year = components.year, (1...9999).contains(year),
-              let month = components.month, (1...12).contains(month),
-              let day = components.day, (1...31).contains(day),
-              let hour = components.hour, (0...23).contains(hour),
-              let minute = components.minute, (0...59).contains(minute),
-              let second = components.second, (0...59).contains(second),
-              components.nanosecond == nil || components.nanosecond == 0 else { return .nonexistent }
+            components.calendar == nil || components.calendar?.identifier == .gregorian,
+            components.timeZone == nil || components.timeZone == calendar.timeZone,
+            components.era == nil || components.era == 1,
+            let year = components.year, (1...9999).contains(year),
+            let month = components.month, (1...12).contains(month),
+            let day = components.day, (1...31).contains(day),
+            let hour = components.hour, (0...23).contains(hour),
+            let minute = components.minute, (0...59).contains(minute),
+            let second = components.second, (0...59).contains(second),
+            components.nanosecond == nil || components.nanosecond == 0
+        else { return .nonexistent }
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(secondsFromGMT: 0)!
         let fields: Set<Calendar.Component> = [.era, .year, .month, .day, .hour, .minute, .second]
-        let requested = DateComponents(era: 1, year: year, month: month, day: day,
-                                       hour: hour, minute: minute, second: second)
+        let requested = DateComponents(
+            era: 1, year: year, month: month, day: day,
+            hour: hour, minute: minute, second: second)
         guard let nominal = utc.date(from: requested), utc.dateComponents(fields, from: nominal) == requested else {
             return .nonexistent
         }
@@ -40,17 +42,20 @@ public enum CorrectionClock {
             offsets.insert(calendar.timeZone.secondsFromGMT(for: transition))
             cursor = transition.addingTimeInterval(1)
         }
-        let instants = Set(offsets.compactMap { offset -> Int64? in
-            let candidate = nominal.addingTimeInterval(-Double(offset))
-            guard calendar.dateComponents(fields, from: candidate) == requested else { return nil }
-            return Int64(candidate.timeIntervalSince1970)
-        }).sorted()
+        let instants = Set(
+            offsets.compactMap { offset -> Int64? in
+                let candidate = nominal.addingTimeInterval(-Double(offset))
+                guard calendar.dateComponents(fields, from: candidate) == requested else { return nil }
+                return Int64(candidate.timeIntervalSince1970)
+            }
+        ).sorted()
         switch instants.count {
         case 1: return .unique(instants[0])
         case 2:
-            return .ambiguous(earlier: instants[0], later: instants[1],
-                              earlierOffset: calendar.timeZone.secondsFromGMT(for: Date(timeIntervalSince1970: Double(instants[0]))),
-                              laterOffset: calendar.timeZone.secondsFromGMT(for: Date(timeIntervalSince1970: Double(instants[1]))))
+            return .ambiguous(
+                earlier: instants[0], later: instants[1],
+                earlierOffset: calendar.timeZone.secondsFromGMT(for: Date(timeIntervalSince1970: Double(instants[0]))),
+                laterOffset: calendar.timeZone.secondsFromGMT(for: Date(timeIntervalSince1970: Double(instants[1]))))
         default: return .nonexistent
         }
     }
@@ -72,10 +77,10 @@ public struct LocalCorrectionTime: Equatable, Sendable {
     public func resolve(calendar: Calendar) throws -> Int64 {
         switch CorrectionClock.resolve(components, calendar: calendar) {
         case .nonexistent: throw CorrectionError.invalidInterval
-        case let .unique(instant):
+        case .unique(let instant):
             guard selectedInstant == nil || selectedInstant == instant else { throw CorrectionError.invalidInterval }
             return instant
-        case let .ambiguous(earlier, later, _, _):
+        case .ambiguous(let earlier, let later, _, _):
             guard let selectedInstant, selectedInstant == earlier || selectedInstant == later else {
                 throw CorrectionError.invalidInterval
             }
@@ -91,7 +96,7 @@ public enum CorrectionDraft: Equatable, Sendable {
 
     var entry: TimeEntry {
         switch self {
-        case let .add(id, taskID, start, end), let .edit(id, taskID, start, end):
+        case .add(let id, let taskID, let start, let end), .edit(let id, let taskID, let start, let end):
             return TimeEntry(id: id, taskID: taskID, startAt: start, endAt: end)
         }
     }
@@ -147,17 +152,22 @@ public enum CorrectionPlanner {
             guard tasks.updateValue(task, forKey: task.id) == nil else { return nil }
         }
         guard let leaf = tasks[taskID],
-              state.projects.filter({ $0.id == leaf.projectID }).count == 1,
-              let project = state.projects.first(where: { $0.id == leaf.projectID }) else { return nil }
-        var ids: [UUID] = [], names: [String] = [], seen: Set<UUID> = []
+            state.projects.filter({ $0.id == leaf.projectID }).count == 1,
+            let project = state.projects.first(where: { $0.id == leaf.projectID })
+        else { return nil }
+        var ids: [UUID] = []
+        var names: [String] = []
+        var seen: Set<UUID> = []
         var cursor: UUID? = taskID
         while let id = cursor {
             guard seen.insert(id).inserted, let task = tasks[id], task.projectID == project.id else { return nil }
-            ids.append(id); names.append(task.name)
+            ids.append(id)
+            names.append(task.name)
             cursor = task.parentTaskID
         }
-        return CorrectionPath(projectID: project.id, projectName: project.name,
-                              taskIDs: Array(ids.reversed()), taskNames: Array(names.reversed()))
+        return CorrectionPath(
+            projectID: project.id, projectName: project.name,
+            taskIDs: Array(ids.reversed()), taskNames: Array(names.reversed()))
     }
 
     static func ordered(_ entries: [TimeEntry]) -> [TimeEntry] {
@@ -172,11 +182,13 @@ public enum CorrectionPlanner {
         try SnapshotValidator.validate(state, now: nil)
         let proposed = draft.entry
         guard let end = proposed.endAt,
-              let interval = try? EntryInterval(startAt: proposed.startAt, endAt: end) else {
+            let interval = try? EntryInterval(startAt: proposed.startAt, endAt: end)
+        else {
             throw CorrectionError.invalidInterval
         }
         guard let target = path(for: proposed.taskID, in: state),
-              !state.tasks.contains(where: { $0.parentTaskID == proposed.taskID }) else {
+            !state.tasks.contains(where: { $0.parentTaskID == proposed.taskID })
+        else {
             throw CorrectionError.unavailableTask
         }
         let source: TimeEntry?
@@ -185,7 +197,9 @@ public enum CorrectionPlanner {
             guard !state.entries.contains(where: { $0.id == proposed.id }) else { throw CorrectionError.stalePreview }
             source = nil
         case .edit:
-            guard let existing = state.entries.first(where: { $0.id == proposed.id }) else { throw CorrectionError.missingEntry }
+            guard let existing = state.entries.first(where: { $0.id == proposed.id }) else {
+                throw CorrectionError.missingEntry
+            }
             guard existing.endAt != nil else { throw CorrectionError.runningConflict }
             guard path(for: existing.taskID, in: state)?.projectID == target.projectID else {
                 throw CorrectionError.crossProjectMove
@@ -206,7 +220,10 @@ public enum CorrectionPlanner {
             guard let owner = path(for: entry.taskID, in: state) else { throw CorrectionError.unavailableTask }
             var retained: [TimeEntry] = []
             if entry.startAt < proposed.startAt {
-                retained.append(TimeEntry(id: entry.id, taskID: entry.taskID, startAt: entry.startAt, endAt: proposed.startAt))
+                retained.append(
+                    TimeEntry(
+                        id: entry.id, taskID: entry.taskID, startAt: entry.startAt,
+                        endAt: proposed.startAt))
             }
             if oldEnd > end {
                 var id = entry.id
@@ -216,14 +233,19 @@ public enum CorrectionPlanner {
                 }
                 retained.append(TimeEntry(id: id, taskID: entry.taskID, startAt: end, endAt: oldEnd))
             }
-            let kind: AdjustmentKind = retained.count == 2 ? .split : retained.isEmpty ? .delete
-                : retained[0].startAt == entry.startAt ? .trimEnd : .trimStart
+            let kind: AdjustmentKind =
+                retained.count == 2
+                ? .split
+                : retained.isEmpty
+                    ? .delete
+                    : retained[0].startAt == entry.startAt ? .trimEnd : .trimStart
             adjustments.append(EntryAdjustment(before: entry, retained: retained, kind: kind, path: owner))
         }
-        return CorrectionPreview(draft: draft, source: source,
-                                 sourcePath: source.flatMap { path(for: $0.taskID, in: state) },
-                                 targetPath: target, adjustments: adjustments, runningConflict: running,
-                                 runningPath: running.flatMap { path(for: $0.taskID, in: state) })
+        return CorrectionPreview(
+            draft: draft, source: source,
+            sourcePath: source.flatMap { path(for: $0.taskID, in: state) },
+            targetPath: target, adjustments: adjustments, runningConflict: running,
+            runningPath: running.flatMap { path(for: $0.taskID, in: state) })
     }
 
     public static func previewDeletion(entryID: UUID, in state: LibrarySnapshot) throws -> DeletionPreview {
@@ -251,22 +273,31 @@ struct CorrectionMutation: Sendable {
         CorrectionReceipt(before: before, after: after, originalProjectByTask: originalProjectByTask)
     }
 
-    static func recheck(_ shown: CorrectionPreview, in state: LibrarySnapshot, now: Int64) throws -> CorrectionMutation {
+    static func recheck(
+        _ shown: CorrectionPreview, in state: LibrarySnapshot,
+        now: Int64
+    ) throws -> CorrectionMutation {
         let fresh: CorrectionPreview
-        do { fresh = try CorrectionPlanner.preview(shown.draft, in: state) }
-        catch { throw CorrectionError.stalePreview }
+        do {
+            fresh = try CorrectionPlanner.preview(
+                shown.draft,
+                in: state)
+        } catch { throw CorrectionError.stalePreview }
         guard fresh.adjustments.count == shown.adjustments.count else { throw CorrectionError.stalePreview }
         let normalized = zip(fresh.adjustments, shown.adjustments).map { current, displayed in
-            EntryAdjustment(before: current.before,
-                            retained: current.retained.enumerated().map { index, row in
-                                let id = current.kind == .split && index == 1 && displayed.retained.count == 2
-                                    ? displayed.retained[1].id : row.id
-                                return TimeEntry(id: id, taskID: row.taskID, startAt: row.startAt, endAt: row.endAt)
-                            }, kind: current.kind, path: current.path)
+            EntryAdjustment(
+                before: current.before,
+                retained: current.retained.enumerated().map { index, row in
+                    let id =
+                        current.kind == .split && index == 1 && displayed.retained.count == 2
+                        ? displayed.retained[1].id : row.id
+                    return TimeEntry(id: id, taskID: row.taskID, startAt: row.startAt, endAt: row.endAt)
+                }, kind: current.kind, path: current.path)
         }
-        let evidence = CorrectionPreview(draft: fresh.draft, source: fresh.source, sourcePath: fresh.sourcePath,
-                                         targetPath: fresh.targetPath, adjustments: normalized,
-                                         runningConflict: fresh.runningConflict, runningPath: fresh.runningPath)
+        let evidence = CorrectionPreview(
+            draft: fresh.draft, source: fresh.source, sourcePath: fresh.sourcePath,
+            targetPath: fresh.targetPath, adjustments: normalized,
+            runningConflict: fresh.runningConflict, runningPath: fresh.runningPath)
         guard evidence == shown else { throw CorrectionError.stalePreview }
         guard fresh.runningConflict == nil else { throw CorrectionError.runningConflict }
         guard let end = shown.draft.entry.endAt, end <= now else { throw CorrectionError.futureEnd }
@@ -275,23 +306,33 @@ struct CorrectionMutation: Sendable {
         let existing = Set(state.entries.map(\.id))
         let splitIDs = shown.adjustments.filter { $0.kind == .split }.map { $0.retained[1].id }
         guard Set(after.map(\.id)).count == after.count, Set(splitIDs).count == splitIDs.count,
-              splitIDs.allSatisfy({ !existing.contains($0) && $0 != shown.draft.entry.id }) else {
+            splitIDs.allSatisfy({ !existing.contains($0) && $0 != shown.draft.entry.id })
+        else {
             throw CorrectionError.stalePreview
         }
         return try make(before: before, after: after, in: state)
     }
 
     static func deletion(_ shown: DeletionPreview, in state: LibrarySnapshot) throws -> CorrectionMutation {
-        guard let fresh = try? CorrectionPlanner.previewDeletion(entryID: shown.entry.id, in: state), fresh == shown else {
+        guard let fresh = try? CorrectionPlanner.previewDeletion(entryID: shown.entry.id, in: state),
+            fresh == shown
+        else {
             throw CorrectionError.deletionChanged
         }
         return try make(before: [shown.entry], after: [], in: state)
     }
 
-    private static func make(before: [TimeEntry], after: [TimeEntry], in state: LibrarySnapshot) throws -> CorrectionMutation {
+    private static func make(
+        before: [TimeEntry], after: [TimeEntry],
+        in state: LibrarySnapshot
+    ) throws -> CorrectionMutation {
         var owners: [UUID: UUID] = [:]
         for row in before {
-            guard let path = CorrectionPlanner.path(for: row.taskID, in: state) else { throw CorrectionError.unavailableTask }
+            guard
+                let path = CorrectionPlanner.path(
+                    for: row.taskID,
+                    in: state)
+            else { throw CorrectionError.unavailableTask }
             owners[row.taskID] = path.projectID
         }
         return CorrectionMutation(before: before, after: after, originalProjectByTask: owners)
@@ -300,60 +341,71 @@ struct CorrectionMutation: Sendable {
     // Warning bands are derived by the common write tail; never restore old bands with entry Undo.
     static func undo(_ receipt: CorrectionReceipt, in state: LibrarySnapshot, now: Int64) throws -> CorrectionMutation {
         guard Set(receipt.before.map(\.id)).count == receipt.before.count,
-              Set(receipt.after.map(\.id)).count == receipt.after.count,
-              Set(state.entries.map(\.id)).count == state.entries.count else { throw CorrectionError.undoUnavailable }
+            Set(receipt.after.map(\.id)).count == receipt.after.count,
+            Set(state.entries.map(\.id)).count == state.entries.count
+        else { throw CorrectionError.undoUnavailable }
         let entries = Dictionary(uniqueKeysWithValues: state.entries.map { ($0.id, $0) })
         let afterIDs = Set(receipt.after.map(\.id))
         guard receipt.after.allSatisfy({ entries[$0.id] == $0 }),
-              receipt.before.allSatisfy({ afterIDs.contains($0.id) || entries[$0.id] == nil }) else {
+            receipt.before.allSatisfy({ afterIDs.contains($0.id) || entries[$0.id] == nil })
+        else {
             throw CorrectionError.undoUnavailable
         }
         for row in receipt.before {
             guard let end = row.endAt, end <= now,
-                  (try? EntryInterval(startAt: row.startAt, endAt: end)) != nil,
-                  let owner = CorrectionPlanner.path(for: row.taskID, in: state),
-                  owner.projectID == receipt.originalProjectByTask[row.taskID],
-                  !state.tasks.contains(where: { $0.parentTaskID == row.taskID }) else {
+                (try? EntryInterval(startAt: row.startAt, endAt: end)) != nil,
+                let owner = CorrectionPlanner.path(for: row.taskID, in: state),
+                owner.projectID == receipt.originalProjectByTask[row.taskID],
+                !state.tasks.contains(where: { $0.parentTaskID == row.taskID })
+            else {
                 throw CorrectionError.undoUnavailable
             }
         }
-        let candidate = LibrarySnapshot(schemaVersion: state.schemaVersion, revision: state.revision,
-                                        projects: state.projects, tasks: state.tasks,
-                                        entries: state.entries.filter { !afterIDs.contains($0.id) } + receipt.before,
-                                        activeTimer: state.activeTimer, pendingSleepIntervals: state.pendingSleepIntervals)
+        let candidate = LibrarySnapshot(
+            schemaVersion: state.schemaVersion, revision: state.revision,
+            projects: state.projects, tasks: state.tasks,
+            entries: state.entries.filter { !afterIDs.contains($0.id) } + receipt.before,
+            activeTimer: state.activeTimer,
+            pendingSleepIntervals: state.pendingSleepIntervals)
         guard SnapshotValidator.violations(in: candidate, now: nil).allSatisfy({ $0.code == .warning }) else {
             throw CorrectionError.undoUnavailable
         }
         return CorrectionMutation(before: receipt.after, after: receipt.before, originalProjectByTask: [:])
     }
 
-    func apply(to db: isolated Storage) throws {
+    func apply(to database: isolated Storage) throws {
         func key(_ id: UUID) -> SQLValue { .text(id.uuidString.lowercased()) }
         for row in before {
             guard let end = row.endAt else { throw CorrectionError.runningConflict }
-            try db.runCommand("DELETE FROM time_entries WHERE id=? AND task_id=? AND start_at=? AND end_at=?",
-                              bindings: [key(row.id), key(row.taskID), .integer(row.startAt), .integer(end)], expectedChanges: 1)
+            try database.runCommand(
+                "DELETE FROM time_entries WHERE id=? AND task_id=? AND start_at=? AND end_at=?",
+                bindings: [key(row.id), key(row.taskID), .integer(row.startAt), .integer(end)],
+                expectedChanges: 1)
         }
         for row in after {
             guard let end = row.endAt else { throw CorrectionError.invalidInterval }
-            try db.runCommand("INSERT INTO time_entries(id,task_id,start_at,end_at) VALUES (?,?,?,?)",
-                              bindings: [key(row.id), key(row.taskID), .integer(row.startAt), .integer(end)], expectedChanges: 1)
+            try database.runCommand(
+                "INSERT INTO time_entries(id,task_id,start_at,end_at) VALUES (?,?,?,?)",
+                bindings: [key(row.id), key(row.taskID), .integer(row.startAt), .integer(end)],
+                expectedChanges: 1)
         }
     }
 }
 
 extension Library {
-    func performCorrection(_ command: CorrectionCommand, receipt: CorrectionReceipt?,
-                           expectedRevision: Int64, instant: Int64) async throws -> Committed<CorrectionReceipt?> {
+    func performCorrection(
+        _ command: CorrectionCommand, receipt: CorrectionReceipt?,
+        expectedRevision: Int64, instant: Int64
+    ) async throws -> Committed<CorrectionReceipt?> {
         // Only proposed/restored ends are checked against now; unrelated saved history may be future after rollback.
-        try await transact(expectedRevision: expectedRevision, validationNow: nil) { db, before in
+        try await transact(expectedRevision: expectedRevision, validationNow: nil) { database, before in
             let mutation: CorrectionMutation
             let next: CorrectionReceipt?
             switch command {
-            case let .apply(preview):
+            case .apply(let preview):
                 mutation = try CorrectionMutation.recheck(preview, in: before, now: instant)
                 next = mutation.receipt
-            case let .delete(preview):
+            case .delete(let preview):
                 mutation = try CorrectionMutation.deletion(preview, in: before)
                 next = mutation.receipt
             case .undo:
@@ -361,7 +413,7 @@ extension Library {
                 mutation = try CorrectionMutation.undo(receipt, in: before, now: instant)
                 next = nil
             }
-            try mutation.apply(to: db)
+            try mutation.apply(to: database)
             return next
         }
     }

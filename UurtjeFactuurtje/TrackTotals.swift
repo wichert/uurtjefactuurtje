@@ -23,18 +23,23 @@ private struct TaskTotals {
         return totals
     }
 
-    private static func taskIndex(_ snapshot: LibrarySnapshot,
-                                  totals: [TrackRowID: Int64]) throws -> [UUID: TaskRecord] {
+    private static func taskIndex(
+        _ snapshot: LibrarySnapshot,
+        totals: [TrackRowID: Int64]
+    ) throws -> [UUID: TaskRecord] {
         var tasks: [UUID: TaskRecord] = [:]
         for task in snapshot.tasks {
             guard totals[.project(task.projectID)] != nil,
-                  tasks.updateValue(task, forKey: task.id) == nil else { throw ReportError.invalidHierarchy }
+                tasks.updateValue(task, forKey: task.id) == nil
+            else { throw ReportError.invalidHierarchy }
         }
         return tasks
     }
 
-    private static func bottomUpOrder(_ snapshot: LibrarySnapshot,
-                                      tasks: [UUID: TaskRecord]) throws -> [UUID] {
+    private static func bottomUpOrder(
+        _ snapshot: LibrarySnapshot,
+        tasks: [UUID: TaskRecord]
+    ) throws -> [UUID] {
         var remaining: [UUID: Int] = [:]
         for task in snapshot.tasks {
             if let parent = task.parentTaskID {
@@ -57,15 +62,18 @@ private struct TaskTotals {
         return bottomUp
     }
 
-    mutating func addEntries(_ entries: [TimeEntry], snapshot: LibrarySnapshot,
-                             liveEnd: Int64?) throws {
+    mutating func addEntries(
+        _ entries: [TimeEntry], snapshot: LibrarySnapshot,
+        liveEnd: Int64?
+    ) throws {
         // remaining is now zeroed; keep structural leaf identity independently for entry checks.
         let parentIDs = Set(snapshot.tasks.compactMap(\.parentTaskID))
         var seenEntries = Set<UUID>()
         var foundActive = false
         for entry in entries {
             guard seenEntries.insert(entry.id).inserted,
-                  tasks[entry.taskID] != nil, !parentIDs.contains(entry.taskID) else {
+                tasks[entry.taskID] != nil, !parentIDs.contains(entry.taskID)
+            else {
                 throw ReportError.invalidHierarchy
             }
             let end = try Self.entryEnd(entry, snapshot: snapshot, liveEnd: liveEnd, foundActive: &foundActive)
@@ -78,15 +86,18 @@ private struct TaskTotals {
         guard (snapshot.activeTimer != nil) == foundActive else { throw ReportError.invalidActiveEntry }
     }
 
-    private static func entryEnd(_ entry: TimeEntry, snapshot: LibrarySnapshot,
-                                 liveEnd: Int64?, foundActive: inout Bool) throws -> Int64 {
+    private static func entryEnd(
+        _ entry: TimeEntry, snapshot: LibrarySnapshot,
+        liveEnd: Int64?, foundActive: inout Bool
+    ) throws -> Int64 {
         if let closed = entry.endAt {
             guard entry.id != snapshot.activeTimer?.entryID else { throw ReportError.invalidActiveEntry }
             return closed
         }
         guard let active = snapshot.activeTimer, active.entryID == entry.id, !foundActive,
-              active.checkpointAt >= entry.startAt,
-              liveEnd == nil || liveEnd! >= active.checkpointAt else {
+            active.checkpointAt >= entry.startAt,
+            liveEnd == nil || liveEnd! >= active.checkpointAt
+        else {
             throw ReportError.invalidActiveEntry
         }
         foundActive = true
@@ -128,8 +139,10 @@ enum TrackTotals {
         }
     }
 
-    private static func includesOpen(_ entry: TimeEntry, snapshot: LibrarySnapshot,
-                                     lowerBound: Int64, upperBound: Int64) -> Bool {
+    private static func includesOpen(
+        _ entry: TimeEntry, snapshot: LibrarySnapshot,
+        lowerBound: Int64, upperBound: Int64
+    ) -> Bool {
         entry.startAt >= lowerBound && entry.startAt < upperBound
             || (snapshot.activeTimer?.entryID == entry.id
                 && (snapshot.activeTimer?.checkpointAt ?? entry.startAt) > lowerBound

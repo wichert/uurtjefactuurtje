@@ -1,6 +1,6 @@
 import AppKit
-import Observation
 import LibraryStore
+import Observation
 
 @MainActor @Observable final class NativeHost {
     let workspace: WorkspaceModel
@@ -15,7 +15,11 @@ import LibraryStore
     @ObservationIgnored private var openWindow: (() -> Void)?
     @ObservationIgnored private var settingsAction: (() -> Void)?
     private enum Route {
-        case track, reports, projectReport(UUID, UUID?), review, settings, task(UUID), newTask, project, time
+        case track, reports
+        case projectReport(UUID, UUID?)
+        case review, settings
+        case task(UUID)
+        case newTask, project, time
     }
     private var pending: [Route] = []
     private(set) var pendingAutoReview = false
@@ -25,8 +29,10 @@ import LibraryStore
     private var observing = true
     var publication: (() -> Void)?
 
-    init(directory: URL = URL.applicationSupportDirectory.appendingPathComponent("UurtjeFactuurtje", isDirectory: true),
-         workspace: WorkspaceModel? = nil, defaults: UserDefaults = .standard) {
+    init(
+        directory: URL = URL.applicationSupportDirectory.appendingPathComponent("UurtjeFactuurtje", isDirectory: true),
+        workspace: WorkspaceModel? = nil, defaults: UserDefaults = .standard
+    ) {
         self.directory = directory
         let model = workspace ?? WorkspaceModel(directory: directory)
         self.workspace = model
@@ -60,8 +66,10 @@ import LibraryStore
     }
 
     var recoveryDiagnostics: String {
-        var lines = ["Library: \(directory.path)",
-                     "Workspace state: \(String(describing: workspace.availability))"]
+        var lines = [
+            "Library: \(directory.path)",
+            "Workspace state: \(String(describing: workspace.availability))"
+        ]
         if let snapshot = workspace.snapshot {
             lines.append("Last confirmed revision: \(snapshot.revision)")
             if let active = snapshot.activeTimer {
@@ -87,7 +95,9 @@ import LibraryStore
     }
 
     func installSceneActions(workspace: @escaping () -> Void, settings: @escaping () -> Void) {
-        openWindow = workspace; settingsAction = settings; flushRoutes()
+        openWindow = workspace
+        settingsAction = settings
+        flushRoutes()
     }
     func openTrack() { route(.track) }
     func openReports() { route(.reports) }
@@ -131,7 +141,10 @@ import LibraryStore
     func newTask() { if acceptingMutations { route(.newTask) } }
     func newProject() { if acceptingMutations { route(.project) } }
     func addTime() { if acceptingMutations { route(.time) } }
-    private func route(_ route: Route) { pending.append(route); flushRoutes() }
+    private func route(_ route: Route) {
+        pending.append(route)
+        flushRoutes()
+    }
     private func flushRoutes() {
         guard !flushingRoutes, let openWindow else { return }
         // Scene callbacks can synchronously reinstall actions and re-enter this method.
@@ -180,28 +193,30 @@ import LibraryStore
     func reopen() {
         guard canReopen else { return }
         let result = workspace.enqueueOpen()
-        retain(Task { @MainActor in
-            do {
-                try await result.value
-                if self.available, self.workspace.snapshot != nil, !self.workspace.publicationUncertain {
-                    self.reopenFailure = nil
+        retain(
+            Task { @MainActor in
+                do {
+                    try await result.value
+                    if self.available, self.workspace.snapshot != nil, !self.workspace.publicationUncertain {
+                        self.reopenFailure = nil
+                    }
+                    self.flushRoutes()
+                } catch {
+                    self.reopenFailure = String(describing: error)
                 }
-                self.flushRoutes()
-            } catch {
-                self.reopenFailure = String(describing: error)
-            }
-        })
+            })
     }
     func submitTimer(_ command: TimerCommand) {
         guard acceptingMutations, available else { return }
         let result = workspace.enqueueTimer(command)
-        retain(Task { @MainActor in
-            do {
-                _ = try await result.value
-            } catch {
-                self.track.failure = String(describing: error)
-            }
-        })
+        retain(
+            Task { @MainActor in
+                do {
+                    _ = try await result.value
+                } catch {
+                    self.track.failure = String(describing: error)
+                }
+            })
     }
     func submitFirstWeekday(_ weekday: Int) -> Task<Void, Error>? {
         guard acceptingMutations else { return nil }
@@ -216,8 +231,10 @@ import LibraryStore
     }
     func beginQuit() -> UUID? {
         guard quitAttempt == nil else { return nil }
-        let token = UUID(); quitAttempt = token
-        recoveryDetails = "Library: \(directory.path)"
+        let token = UUID()
+        quitAttempt = token
+        recoveryDetails =
+            "Library: \(directory.path)"
             + "\nLast confirmed snapshot: \(String(describing: workspace.snapshot))"
         return token
     }
@@ -239,7 +256,9 @@ import LibraryStore
     private func waitForWorkspace() async {
         guard workspace.isBusy else { return }
         await withCheckedContinuation { continuation in
-            withObservationTracking { _ = workspace.isBusy } onChange: {
+            withObservationTracking {
+                _ = workspace.isBusy
+            } onChange: {
                 Task { @MainActor in continuation.resume() }
             }
         }
@@ -247,11 +266,12 @@ import LibraryStore
     }
 }
 
-@MainActor private extension NativeHost {
-    func performNewTask() {
-        let project = track.projects.first {
-            $0.id == track.selectedProjectID && !$0.isArchived
-        } ?? track.projects.first { !$0.isArchived }
+@MainActor extension NativeHost {
+    fileprivate func performNewTask() {
+        let project =
+            track.projects.first {
+                $0.id == track.selectedProjectID && !$0.isArchived
+            } ?? track.projects.first { !$0.isArchived }
         if let project {
             track.newTask(projectID: project.id)
         } else {
@@ -263,14 +283,14 @@ import LibraryStore
         switch route {
         case .track: track.destination = .track
         case .reports: track.destination = .reports
-        case let .projectReport(projectID, scopeTaskID):
+        case .projectReport(let projectID, let scopeTaskID):
             reports.openProject(projectID, scopeTaskID: scopeTaskID)
             track.destination = .reports
         case .review:
             track.destination = .track
             track.reviewTime()
             if case .timeReview = track.sheet { pendingAutoReview = false }
-        case let .task(id): track.revealTask(id)
+        case .task(let id): track.revealTask(id)
         case .newTask:
             track.destination = .track
             performNewTask()
@@ -290,10 +310,18 @@ import LibraryStore
     func observe() {
         guard observing else { return }
         withObservationTracking {
-            _ = workspace.snapshot; _ = workspace.availability; _ = workspace.issue
-            _ = workspace.budgetWarnings; _ = workspace.isBusy; _ = workspace.timerStatus
-            _ = track.sheet; _ = track.suspendedTaskDraft; _ = track.acceptedWork
-            _ = track.feedback; _ = quitAttempt; _ = sleeping
+            _ = workspace.snapshot
+            _ = workspace.availability
+            _ = workspace.issue
+            _ = workspace.budgetWarnings
+            _ = workspace.isBusy
+            _ = workspace.timerStatus
+            _ = track.sheet
+            _ = track.suspendedTaskDraft
+            _ = track.acceptedWork
+            _ = track.feedback
+            _ = quitAttempt
+            _ = sleeping
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self, self.observing else { return }

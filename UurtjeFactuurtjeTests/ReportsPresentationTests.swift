@@ -1,6 +1,7 @@
 import Foundation
-import Testing
 import LibraryStore
+import Testing
+
 @testable import UurtjeFactuurtje
 
 @MainActor private func withReports(
@@ -12,17 +13,23 @@ import LibraryStore
 }
 
 @MainActor struct ReportsPresentationTests {
-    private func addProject(_ workspace: WorkspaceModel, _ name: String, currency: String = "EUR") async throws -> UUID {
-        let id = UUID(), snapshot = try #require(workspace.snapshot)
-        _ = try await workspace.submit(.createProject(id: id, name: name, rate: 60, currency: currency),
-                                       expectedRevision: snapshot.revision)
+    private func addProject(
+        _ workspace: WorkspaceModel, _ name: String, currency: String = "EUR"
+    ) async throws -> UUID {
+        let id = UUID()
+        let snapshot = try #require(workspace.snapshot)
+        _ = try await workspace.submit(
+            .createProject(id: id, name: name, rate: 60, currency: currency),
+            expectedRevision: snapshot.revision)
         return id
     }
 
     private func addTask(_ workspace: WorkspaceModel, projectID: UUID, name: String) async throws -> UUID {
-        let id = UUID(), snapshot = try #require(workspace.snapshot)
-        _ = try await workspace.submit(.createTask(id: id, projectID: projectID, parentID: nil, name: name),
-                                       expectedRevision: snapshot.revision)
+        let id = UUID()
+        let snapshot = try #require(workspace.snapshot)
+        _ = try await workspace.submit(
+            .createTask(id: id, projectID: projectID, parentID: nil, name: name),
+            expectedRevision: snapshot.revision)
         return id
     }
 
@@ -95,7 +102,9 @@ import LibraryStore
             #expect(reports.period == .allTime)
             #expect(reports.expandedTaskIDs.isEmpty)
             #expect(reports.selectedLeafID == nil)
-            _ = try await workspace.submit(.setArchived(id: second, archived: true), expectedRevision: try #require(workspace.snapshot).revision)
+            _ = try await workspace.submit(
+                .setArchived(id: second, archived: true),
+                expectedRevision: try #require(workspace.snapshot).revision)
             reports.refresh(now: 1_710_000_000, calendar: calendar("UTC"))
             #expect(reports.selectedProjectID == nil)
             reports.openProject(first)
@@ -115,10 +124,16 @@ import LibraryStore
         #expect(ReportFormatting.amount(yen, locale: locale) == "JPY 1")
         #expect(ReportFormatting.duration(seconds: 3661) == "1 h 1 min 1 sec (3661 seconds)")
         let kwd = Project(id: UUID(), name: "P", hourlyRate: 1, currencyCode: "KWD")
-        #expect(ReportFormatting.amount(try ReportProjection.amount(seconds: 3600, project: kwd), locale: locale) == "KWD 1.000")
-        let huge = Project(id: UUID(), name: "P", hourlyRate: Decimal(string: "1000000000000000000000000000000000000")!, currencyCode: "EUR")
+        #expect(
+            ReportFormatting.amount(try ReportProjection.amount(seconds: 3600, project: kwd), locale: locale)
+                == "KWD 1.000")
+        let huge = Project(
+            id: UUID(), name: "P", hourlyRate: Decimal(string: "1000000000000000000000000000000000000")!,
+            currencyCode: "EUR")
         let amount = try ReportProjection.amount(seconds: Int64.max, project: huge)
-        #expect(ReportFormatting.amount(amount, locale: locale) == "EUR 2562047788015215501944444444444444444444444444444444.44")
+        #expect(
+            ReportFormatting.amount(amount, locale: locale)
+                == "EUR 2562047788015215501944444444444444444444444444444444.44")
     }
 
     @Test func testClippedRowKeepsOriginalEntryAndPeriodBudgetSeparation() async throws {
@@ -128,7 +143,9 @@ import LibraryStore
             let id = UUID()
             let start: Int64 = 1_704_063_000
             let end: Int64 = 1_704_070_200
-            let preview = try CorrectionPlanner.preview(.add(id: id, taskID: task, startAt: start, endAt: end), in: #require(workspace.snapshot))
+            let preview = try CorrectionPlanner.preview(
+                .add(id: id, taskID: task, startAt: start, endAt: end),
+                in: #require(workspace.snapshot))
             _ = try await workspace.enqueueCorrection(.apply(preview)).value
             reports.openProject(project)
             reports.period = .day(containing: 1_704_067_200)
@@ -149,9 +166,14 @@ import LibraryStore
             reports.editEntry(row)
             #expect(reports.selectedEntryID == id)
             if case .correction(let route) = track.sheet {
-                if case .edit(let entryID) = route.mode { #expect(entryID == id) }
-                else { Issue.record("Expected edit route") }
-            } else { Issue.record("Expected correction sheet") }
+                if case .edit(let entryID) = route.mode {
+                    #expect(entryID == id)
+                } else {
+                    Issue.record("Expected edit route")
+                }
+            } else {
+                Issue.record("Expected correction sheet")
+            }
         }
     }
 
@@ -176,8 +198,9 @@ import LibraryStore
             reports.openProject(id)
             reports.refresh(now: 1_710_000_000, calendar: calendar("UTC"))
             #expect(reports.project != nil)
-            reports.applyCustom(first: DateComponents(year: 2024, month: 2, day: 31),
-                                last: DateComponents(year: 2024, month: 3, day: 2))
+            reports.applyCustom(
+                first: DateComponents(year: 2024, month: 2, day: 31),
+                last: DateComponents(year: 2024, month: 3, day: 2))
             reports.refresh(now: 1_710_000_000, calendar: calendar("UTC"))
             #expect(reports.project == nil)
             #expect(reports.error != nil)
@@ -233,16 +256,17 @@ import LibraryStore
 
 extension ReportsPresentationTests {
     @Test func compactBudgetHoursAreLocalizedAndMarkRounding() {
-        let en = Locale(identifier: "en_US_POSIX"), nl = Locale(identifier: "nl_NL")
-        #expect(ReportFormatting.budgetHours(seconds: 0, locale: en) == "0 h")
-        #expect(ReportFormatting.budgetHours(seconds: 1, locale: en) == "<0.01 h")
-        #expect(ReportFormatting.budgetHours(seconds: 18, locale: en) == "≈0.01 h")
-        #expect(ReportFormatting.budgetHours(seconds: 36, locale: en) == "0.01 h")
-        #expect(ReportFormatting.budgetHours(seconds: 3599, locale: en) == "≈1 h")
-        #expect(ReportFormatting.budgetHours(seconds: 3600, locale: en) == "1 h")
-        #expect(ReportFormatting.budgetHours(seconds: 3601, locale: en) == "≈1 h")
-        #expect(ReportFormatting.budgetHours(seconds: 4500, locale: nl) == "1,25 h")
-        #expect(ReportFormatting.budgetHours(seconds: 1, locale: nl) == "<0,01 h")
+        let englishLocale = Locale(identifier: "en_US_POSIX")
+        let dutchLocale = Locale(identifier: "nl_NL")
+        #expect(ReportFormatting.budgetHours(seconds: 0, locale: englishLocale) == "0 h")
+        #expect(ReportFormatting.budgetHours(seconds: 1, locale: englishLocale) == "<0.01 h")
+        #expect(ReportFormatting.budgetHours(seconds: 18, locale: englishLocale) == "≈0.01 h")
+        #expect(ReportFormatting.budgetHours(seconds: 36, locale: englishLocale) == "0.01 h")
+        #expect(ReportFormatting.budgetHours(seconds: 3599, locale: englishLocale) == "≈1 h")
+        #expect(ReportFormatting.budgetHours(seconds: 3600, locale: englishLocale) == "1 h")
+        #expect(ReportFormatting.budgetHours(seconds: 3601, locale: englishLocale) == "≈1 h")
+        #expect(ReportFormatting.budgetHours(seconds: 4500, locale: dutchLocale) == "1,25 h")
+        #expect(ReportFormatting.budgetHours(seconds: 1, locale: dutchLocale) == "<0,01 h")
         #expect(ReportFormatting.duration(seconds: 3661) == "1 h 1 min 1 sec (3661 seconds)")
     }
 
@@ -251,7 +275,13 @@ extension ReportsPresentationTests {
         #expect(ReportFormatting.budgetBalance(used: 3599, budget: 60, locale: locale) == "<0.01 h remaining")
         #expect(ReportFormatting.budgetBalance(used: 3600, budget: 60, locale: locale) == "Budget reached")
         #expect(ReportFormatting.budgetBalance(used: 3601, budget: 60, locale: locale) == "<0.01 h overrun")
-        for (used, band) in [(Decimal(2879), WarningThreshold.none), (2880, .eighty), (3599, .eighty), (3600, .hundred), (3601, .hundred)] {
+        for (used, band) in [
+            (Decimal(2879), WarningThreshold.none), (2880, .eighty), (3599, .eighty),
+            (
+                3600,
+                .hundred
+            ), (3601, .hundred)
+        ] {
             #expect(BudgetRules.band(used: used, budget: 60) == band)
         }
         let max = Decimal(Int64.max)
@@ -259,38 +289,58 @@ extension ReportsPresentationTests {
         #expect(ReportFormatting.budgetHours(seconds: max * 2, locale: locale) == "≈5124095576030431 h")
         #expect(ReportFormatting.budgetBalance(used: max * 60 + 1, budget: .max, locale: locale) == "<0.01 h overrun")
         #expect(ReportFormatting.budgetBalance(used: max * 60 - 1, budget: .max, locale: locale) == "<0.01 h remaining")
-        #expect(ReportFormatting.budgetAllocation(allocated: max * 2, budget: .max, locale: locale)
-            == "Allocated ≈307445734561825860.23 h / ≈153722867280912930.12 h; ≈153722867280912930.12 h overallocated")
+        let expected = "Allocated ≈307445734561825860.23 h / ≈153722867280912930.12 h; " +
+            "≈153722867280912930.12 h overallocated"
+        #expect(ReportFormatting.budgetAllocation(allocated: max * 2, budget: .max, locale: locale) == expected)
     }
 
     @Test func compactAllocationsKeepNearestFrontierAndLargeDecimalTotals() throws {
-        let projectID = UUID(), root = UUID(), bridge = UUID(), child = UUID(), grandchild = UUID(), sibling = UUID()
+        let projectID = UUID()
+        let root = UUID()
+        let bridge = UUID()
+        let child = UUID()
+        let grandchild = UUID()
+        let sibling = UUID()
         func snapshot(_ limit: Int64, _ first: Int64, _ second: Int64) -> LibrarySnapshot {
-            LibrarySnapshot(schemaVersion: 2, revision: 0,
+            LibrarySnapshot(
+                schemaVersion: 2, revision: 0,
                 projects: [Project(id: projectID, name: "Client", hourlyRate: 60, currencyCode: "EUR")],
                 tasks: [
                     TaskRecord(id: root, projectID: projectID, name: "Root", budgetMinutes: limit),
                     TaskRecord(id: bridge, projectID: projectID, parentTaskID: root, name: "Bridge"),
-                    TaskRecord(id: child, projectID: projectID, parentTaskID: bridge, name: "Child", budgetMinutes: first),
-                    TaskRecord(id: grandchild, projectID: projectID, parentTaskID: child, name: "Grandchild", budgetMinutes: 1),
-                    TaskRecord(id: sibling, projectID: projectID, parentTaskID: root, name: "Sibling", budgetMinutes: second)
+                    TaskRecord(
+                        id: child, projectID: projectID, parentTaskID: bridge, name: "Child", budgetMinutes: first),
+                    TaskRecord(
+                        id: grandchild, projectID: projectID, parentTaskID: child,
+                        name: "Grandchild", budgetMinutes: 1),
+                    TaskRecord(
+                        id: sibling, projectID: projectID, parentTaskID: root, name: "Sibling", budgetMinutes: second)
                 ], entries: [], activeTimer: nil, pendingSleepIntervals: [])
         }
         let locale = Locale(identifier: "en_US_POSIX")
         let exact = try BudgetRules.allocations(in: snapshot(60, 30, 30))
         let allocation = try #require(exact.first { $0.taskID == root })
         #expect(allocation.allocatedMinutes == 60, "Do not double-count the grandchild through its budgeted parent")
-        #expect(ReportFormatting.budgetAllocation(allocated: allocation.allocatedMinutes, budget: allocation.limitMinutes, locale: locale)
-            == "Allocated 1 h / 1 h; 0 h unallocated")
+        #expect(
+            ReportFormatting.budgetAllocation(
+                allocated: allocation.allocatedMinutes,
+                budget: allocation.limitMinutes, locale: locale)
+                == "Allocated 1 h / 1 h; 0 h unallocated")
         let nearly = try BudgetRules.allocations(in: snapshot(60, 30, 29))
         let near = try #require(nearly.first { $0.taskID == root })
-        #expect(ReportFormatting.budgetAllocation(allocated: near.allocatedMinutes, budget: near.limitMinutes, locale: locale)
-            == "Allocated ≈0.98 h / 1 h; ≈0.02 h unallocated")
+        #expect(
+            ReportFormatting.budgetAllocation(
+                allocated: near.allocatedMinutes, budget: near.limitMinutes,
+                locale: locale)
+                == "Allocated ≈0.98 h / 1 h; ≈0.02 h unallocated")
         let excessive = snapshot(.max, .max, .max)
         let huge = try #require(try BudgetRules.allocations(in: excessive).first { $0.taskID == root })
         #expect(huge.allocatedMinutes == Decimal(Int64.max) * 2)
         #expect(SnapshotValidator.violations(in: excessive).contains { $0.code == .allocation && $0.recordID == root })
-        #expect(ReportFormatting.budgetAllocation(allocated: huge.allocatedMinutes, budget: huge.limitMinutes, locale: locale).hasSuffix("overallocated"))
+        #expect(
+            ReportFormatting.budgetAllocation(
+                allocated: huge.allocatedMinutes, budget: huge.limitMinutes, locale: locale
+            ).hasSuffix("overallocated"))
     }
 
     @Test func budgetDisplayDoesNotChangeMixedCurrencyReportsOrWrite() async throws {
@@ -299,13 +349,19 @@ extension ReportsPresentationTests {
             let yen = try await addProject(workspace, "Yen", currency: "JPY")
             let euroTask = try await addTask(workspace, projectID: euro, name: "Euro work")
             let yenTask = try await addTask(workspace, projectID: yen, name: "Yen work")
-            for (taskID, start, end) in [(euroTask, Int64(1_704_067_200), Int64(1_704_070_800)),
-                                         (yenTask, Int64(1_704_070_800), Int64(1_704_074_400))] {
-                let preview = try CorrectionPlanner.preview(.add(id: UUID(), taskID: taskID, startAt: start, endAt: end),
-                                                             in: #require(workspace.snapshot))
+            for (taskID, start, end) in [
+                (euroTask, Int64(1_704_067_200), Int64(1_704_070_800)),
+                (yenTask, Int64(1_704_070_800), Int64(1_704_074_400))
+            ] {
+                let preview = try CorrectionPlanner.preview(
+                    .add(
+                        id: UUID(), taskID: taskID, startAt: start,
+                        endAt: end),
+                    in: #require(workspace.snapshot))
                 _ = try await workspace.enqueueCorrection(.apply(preview)).value
-                _ = try await workspace.submit(.editTask(id: taskID, name: taskID == euroTask ? "Euro work" : "Yen work", budgetMinutes: 60),
-                                               expectedRevision: try #require(workspace.snapshot).revision)
+                _ = try await workspace.submit(
+                    .editTask(id: taskID, name: taskID == euroTask ? "Euro work" : "Yen work", budgetMinutes: 60),
+                    expectedRevision: try #require(workspace.snapshot).revision)
             }
             let before = try #require(workspace.snapshot)
             let warnings = workspace.budgetWarnings.map(\.id)
@@ -313,12 +369,15 @@ extension ReportsPresentationTests {
             reports.refresh(now: 1_704_110_400, calendar: calendar("UTC"))
             let weekBefore = try #require(reports.week)
             let amountsBefore = reports.weeklyAmounts
-            #expect(Set(amountsBefore.map { ReportFormatting.amount($0, locale: locale) }) == Set(["EUR 60.00", "JPY 60"]))
+            #expect(
+                Set(amountsBefore.map { ReportFormatting.amount($0, locale: locale) }) == Set(["EUR 60.00", "JPY 60"]))
             for allocation in try BudgetRules.allocations(in: before) {
                 let used = try workspace.budgetUsage()[allocation.taskID] ?? 0
                 _ = ReportFormatting.budgetHours(seconds: used, locale: locale)
                 _ = ReportFormatting.budgetBalance(used: used, budget: allocation.limitMinutes, locale: locale)
-                _ = ReportFormatting.budgetAllocation(allocated: allocation.allocatedMinutes, budget: allocation.limitMinutes, locale: locale)
+                _ = ReportFormatting.budgetAllocation(
+                    allocated: allocation.allocatedMinutes,
+                    budget: allocation.limitMinutes, locale: locale)
             }
             for (projectID, expected) in [(euro, "EUR 60.00"), (yen, "JPY 60")] {
                 reports.openProject(projectID)
@@ -337,4 +396,3 @@ extension ReportsPresentationTests {
         }
     }
 }
-

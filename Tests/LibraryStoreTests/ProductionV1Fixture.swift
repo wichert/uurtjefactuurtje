@@ -1,7 +1,10 @@
 import Foundation
 import SQLite3
+
 @testable import LibraryStore
 
+// This is a byte-exact production schema fixture; do not reformat its SQL.
+// swiftlint:disable line_length
 let productionV1DDL = """
 CREATE TABLE library_metadata (id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER NOT NULL CHECK (schema_version >= 1), revision INTEGER NOT NULL CHECK (revision >= 0));
 CREATE TABLE projects (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL CHECK (length(trim(name)) > 0), hourly_rate TEXT NOT NULL, currency_code TEXT NOT NULL CHECK (length(currency_code) = 3), is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)));
@@ -20,14 +23,15 @@ CREATE TRIGGER active_timer_update_valid BEFORE UPDATE ON active_timer WHEN NOT 
 CREATE TRIGGER active_entry_update_valid BEFORE UPDATE ON time_entries WHEN EXISTS (SELECT 1 FROM active_timer WHERE entry_id = OLD.id AND (NEW.end_at IS NOT NULL OR NEW.start_at > checkpoint_at)) BEGIN SELECT RAISE(ABORT, 'invalid active entry'); END;
 INSERT INTO library_metadata VALUES (1,1,7);
 """
+// swiftlint:enable line_length
 
 func createProductionV1(_ url: URL) throws {
-    var db: OpaquePointer?
-    let rc = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
-    guard rc == SQLITE_OK, let db else { throw StorageError.sqlite(rc, "open v1") }
-    defer { sqlite3_close_v2(db) }
-    let result = sqlite3_exec(db, productionV1DDL, nil, nil, nil)
+    var database: OpaquePointer?
+    let resultCode = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
+    guard resultCode == SQLITE_OK, let database else { throw StorageError.sqlite(resultCode, "open v1") }
+    defer { sqlite3_close_v2(database) }
+    let result = sqlite3_exec(database, productionV1DDL, nil, nil, nil)
     guard result == SQLITE_OK else {
-        throw StorageError.sqlite(result, String(cString: sqlite3_errmsg(db)))
+        throw StorageError.sqlite(result, String(cString: sqlite3_errmsg(database)))
     }
 }

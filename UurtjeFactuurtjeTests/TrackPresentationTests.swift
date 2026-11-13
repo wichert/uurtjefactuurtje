@@ -1,82 +1,136 @@
 import Foundation
 import Testing
+
 @testable import LibraryStore
 @testable import UurtjeFactuurtje
 
 @Suite @MainActor struct TrackPresentationTests {
     @Test func emptyFirstProjectAndStaleSelections() async throws {
-        try await withTrack { t, _ in
-            #expect(t.projects.isEmpty)
-            t.selectedProjectID = UUID(); t.selectedTaskID = UUID(); t.expandedTaskIDs = [UUID()]
-            t.reconcile(); #expect(t.selectedProjectID == nil); #expect(t.selectedTaskID == nil); #expect(t.expandedTaskIDs.isEmpty)
-            t.editProject()
-            guard case .project(let draft) = t.sheet else { Issue.record("Expected first project editor"); return }
+        try await withTrack { track, _ in
+            #expect(track.projects.isEmpty)
+            track.selectedProjectID = UUID()
+            track.selectedTaskID = UUID()
+            track.expandedTaskIDs = [UUID()]
+            track.reconcile()
+            #expect(track.selectedProjectID == nil)
+            #expect(track.selectedTaskID == nil)
+            #expect(track.expandedTaskIDs.isEmpty)
+            track.editProject()
+            guard case .project(let draft) = track.sheet else {
+                Issue.record("Expected first project editor")
+                return
+            }
             #expect(draft.isNew)
-            t.cancelSheet()
-            let p = try await project(t)
-            t.selectedProjectID = p; t.newTask(projectID: p)
-            guard case .task(let next) = t.sheet else { Issue.record("Expected first task"); return }
-            #expect(next.projectID == p); #expect(next.isNew)
-            #expect(t.workspace.snapshot?.activeTimer == nil)
+            track.cancelSheet()
+            let projectID = try await project(track)
+            track.selectedProjectID = projectID
+            track.newTask(projectID: projectID)
+            guard case .task(let next) = track.sheet else {
+                Issue.record("Expected first task")
+                return
+            }
+            #expect(next.projectID == projectID)
+            #expect(next.isNew)
+            #expect(track.workspace.snapshot?.activeTimer == nil)
         }
     }
     @Test func repeatedRevealDefersSheetAndArchivedSelection() async throws {
-        try await withTrack { t, _ in
-            let p = try await project(t), root = try await task(t, project: p, name: "Root")
-            let leaf = try await task(t, project: p, parent: root, name: "Leaf")
-            t.editTask(leaf); let token = t.routeToken
-            t.search = "hidden"; t.revealTask(leaf); let first = t.reveal?.id
-            t.revealTask(leaf)
-            #expect(t.reveal?.id != first); #expect(t.routeToken == token); #expect(t.sheet != nil)
-            #expect(t.search.isEmpty); #expect(t.expandedTaskIDs.contains(root))
-            t.cancelSheet()
-            let s = try #require(t.workspace.snapshot)
-            _ = try await t.workspace.submit(.setArchived(id: p, archived: true), expectedRevision: s.revision)
-            t.showArchived = false; t.reconcile()
-            #expect(t.selectedTaskID == leaf); #expect(t.selectedProjectID == p)
-            #expect(!t.eligible(leaf)); #expect(!t.canStartFromList(leaf, listFocused: true))
-            t.revealTask(leaf); #expect(t.showArchived)
+        try await withTrack { track, _ in
+            let projectID = try await project(track)
+            let root = try await task(track, project: projectID, name: "Root")
+            let leaf = try await task(track, project: projectID, parent: root, name: "Leaf")
+            track.editTask(leaf)
+            let token = track.routeToken
+            track.search = "hidden"
+            track.revealTask(leaf)
+            let first = track.reveal?.id
+            track.revealTask(leaf)
+            #expect(track.reveal?.id != first)
+            #expect(track.routeToken == token)
+            #expect(track.sheet != nil)
+            #expect(track.search.isEmpty)
+            #expect(track.expandedTaskIDs.contains(root))
+            track.cancelSheet()
+            let statement = try #require(track.workspace.snapshot)
+            _ = try await track.workspace.submit(
+                .setArchived(id: projectID, archived: true),
+                expectedRevision: statement.revision)
+            track.showArchived = false
+            track.reconcile()
+            #expect(track.selectedTaskID == leaf)
+            #expect(track.selectedProjectID == projectID)
+            #expect(!track.eligible(leaf))
+            #expect(!track.canStartFromList(leaf, listFocused: true))
+            track.revealTask(leaf)
+            #expect(track.showArchived)
         }
     }
     @Test func filteredRunningIdentityAndDisplayDoNotWrite() async throws {
-        try await withTrack { t, _ in
-            let p = try await project(t), leaf = try await task(t, project: p)
-            _ = try await t.workspace.enqueueTimer(.start(taskID: leaf)).value
-            let before = try #require(t.workspace.snapshot)
-            let warnings = t.workspace.budgetWarnings.map(\.id)
-            t.search = "hidden"; t.selectedProjectID = nil
-            #expect(t.path(leaf).contains("Project / Task"))
-            #expect(t.ownedStop != nil)
-            for _ in 0..<3 { _ = try t.workspace.timerElapsedSeconds(); _ = try t.workspace.budgetUsage() }
-            #expect(t.workspace.snapshot == before); #expect(t.workspace.budgetWarnings.map(\.id) == warnings)
-            _ = try await t.workspace.enqueueTimer(.stop(expectedEntryID: before.activeTimer?.entryID)).value
+        try await withTrack { track, _ in
+            let projectID = try await project(track)
+            let leaf = try await task(track, project: projectID)
+            _ = try await track.workspace.enqueueTimer(.start(taskID: leaf)).value
+            let before = try #require(track.workspace.snapshot)
+            let warnings = track.workspace.budgetWarnings.map(\.id)
+            track.search = "hidden"
+            track.selectedProjectID = nil
+            #expect(track.path(leaf).contains("Project / Task"))
+            #expect(track.ownedStop != nil)
+            for _ in 0..<3 {
+                _ = try track.workspace.timerElapsedSeconds()
+                _ = try track.workspace.budgetUsage()
+            }
+            #expect(track.workspace.snapshot == before)
+            #expect(track.workspace.budgetWarnings.map(\.id) == warnings)
+            _ = try await track.workspace.enqueueTimer(.stop(expectedEntryID: before.activeTimer?.entryID)).value
         }
     }
     @Test func localDayIntersectionsKeepWholeIdentity() throws {
-        var c = Calendar(identifier: .gregorian); c.timeZone = try #require(TimeZone(identifier: "Europe/Amsterdam"))
-        for components in [DateComponents(year: 2025, month: 3, day: 30), DateComponents(year: 2025, month: 10, day: 26)] {
-            let noon = try #require(c.date(from: components)).addingTimeInterval(12 * 3600)
-            let day = try #require(c.dateInterval(of: .day, for: noon))
-            let lo = Int64(day.start.timeIntervalSince1970), hi = Int64(day.end.timeIntervalSince1970)
-            #expect(hi - lo == (components.month == 3 ? 23 : 25) * 3600)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Europe/Amsterdam"))
+        for components in [
+            DateComponents(year: 2025, month: 3, day: 30),
+            DateComponents(
+                year: 2025, month: 10,
+                day: 26)
+        ] {
+            let noon = try #require(calendar.date(from: components)).addingTimeInterval(12 * 3600)
+            let day = try #require(calendar.dateInterval(of: .day, for: noon))
+            let lowerBound = Int64(day.start.timeIntervalSince1970)
+            let upperBound = Int64(day.end.timeIntervalSince1970)
+            #expect(upperBound - lowerBound == (components.month == 3 ? 23 : 25) * 3600)
             let owner = UUID()
-            let crossing = TimeEntry(id: UUID(), taskID: owner, startAt: lo - 60, endAt: hi + 60)
-            let adjacent = TimeEntry(id: UUID(), taskID: owner, startAt: lo - 120, endAt: lo)
-            let s = LibrarySnapshot(schemaVersion: 2, revision: 0, projects: [], tasks: [], entries: [crossing, adjacent], activeTimer: nil, pendingSleepIntervals: [])
-            let rows = TrackPresentation.todayEntries(in: s, now: noon, calendar: c)
-            #expect(rows == [crossing]); #expect(rows[0].startAt == lo - 60); #expect(rows[0].endAt == hi + 60)
+            let crossing = TimeEntry(id: UUID(), taskID: owner, startAt: lowerBound - 60, endAt: upperBound + 60)
+            let adjacent = TimeEntry(id: UUID(), taskID: owner, startAt: lowerBound - 120, endAt: lowerBound)
+            let statement = LibrarySnapshot(
+                schemaVersion: 2, revision: 0, projects: [], tasks: [],
+                entries: [crossing, adjacent], activeTimer: nil, pendingSleepIntervals: [])
+            let rows = TrackPresentation.todayEntries(in: statement, now: noon, calendar: calendar)
+            #expect(rows == [crossing])
+            #expect(rows[0].startAt == lowerBound - 60)
+            #expect(rows[0].endAt == upperBound + 60)
         }
     }
     @Test func routeTokenRejectsLateCompletionAndAcceptedDismissal() async throws {
-        try await withTrack { t, _ in
-            _ = try await project(t)
-            t.editProject(); let token = t.routeToken
-            #expect(t.begin(token)); t.cancelSheet(); #expect(t.sheet != nil)
-            t.complete(UUID()); #expect(t.acceptedWork)
-            t.complete(token, error: EditorError.invalid("disk full"))
-            #expect(t.sheet != nil); #expect(!t.acceptedWork); #expect(t.failure != nil)
-            t.cancelSheet(); t.reviewTime(); let replacement = t.routeToken
-            t.complete(token); #expect(t.routeToken == replacement); #expect(t.sheet != nil)
+        try await withTrack { track, _ in
+            _ = try await project(track)
+            track.editProject()
+            let token = track.routeToken
+            #expect(track.begin(token))
+            track.cancelSheet()
+            #expect(track.sheet != nil)
+            track.complete(UUID())
+            #expect(track.acceptedWork)
+            track.complete(token, error: EditorError.invalid("disk full"))
+            #expect(track.sheet != nil)
+            #expect(!track.acceptedWork)
+            #expect(track.failure != nil)
+            track.cancelSheet()
+            track.reviewTime()
+            let replacement = track.routeToken
+            track.complete(token)
+            #expect(track.routeToken == replacement)
+            #expect(track.sheet != nil)
         }
     }
 }

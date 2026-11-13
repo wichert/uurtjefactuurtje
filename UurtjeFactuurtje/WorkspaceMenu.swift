@@ -11,9 +11,10 @@ import LibraryStore
 
     static func activeTaskID(_ track: TrackPresentation) -> UUID? {
         guard let snapshot = track.workspace.snapshot,
-              let active = snapshot.activeTimer,
-              let entry = snapshot.entries.first(where: { $0.id == active.entryID }),
-              track.eligible(entry.taskID) else {
+            let active = snapshot.activeTimer,
+            let entry = snapshot.entries.first(where: { $0.id == active.entryID }),
+            track.eligible(entry.taskID)
+        else {
             return nil
         }
         return entry.taskID
@@ -36,15 +37,18 @@ import LibraryStore
         var result: [UUID] = []
         for entry in entries {
             guard entry.taskID != active, track.eligible(entry.taskID),
-                  seen.insert(entry.taskID).inserted else { continue }
+                seen.insert(entry.taskID).inserted
+            else { continue }
             result.append(entry.taskID)
             if result.count == limit { break }
         }
         return result
     }
 
-    static func matchingTasks(_ track: TrackPresentation, query: String,
-                              limit: Int = autocompleteLimit) -> [UUID] {
+    static func matchingTasks(
+        _ track: TrackPresentation, query: String,
+        limit: Int = autocompleteLimit
+    ) -> [UUID] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, limit > 0 else { return [] }
         let active = activeTaskID(track)

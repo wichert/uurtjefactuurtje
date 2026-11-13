@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import Testing
+
 @testable import LibraryStore
 
 private enum PreferenceTestError: Error, Equatable { case injected }
@@ -89,8 +90,10 @@ private final class PreferenceObservation: @unchecked Sendable {
             #expect(model.firstWeekday == nil)
             await #expect(throws: LibraryAccessError.unavailable) { try await model.setFirstWeekday(3) }
             await gate.release()
-            do { try await opening.value; Issue.record("invalid settings accepted") }
-            catch { }
+            do {
+                try await opening.value
+                Issue.record("invalid settings accepted")
+            } catch {}
             #expect(model.availability == .blocked)
             #expect(model.firstWeekday == nil)
             #expect(model.snapshot == nil)
@@ -108,11 +111,14 @@ private final class PreferenceObservation: @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent("settings.plist")
-        let bad = try PropertyListSerialization.data(fromPropertyList: ["version": 1, "firstWeekday": 8], format: .binary, options: 0)
+        let bad = try PropertyListSerialization.data(
+            fromPropertyList: ["version": 1, "firstWeekday": 8], format: .binary, options: 0)
         try bad.write(to: url)
         let model = WorkspaceModel(directory: directory)
-        do { try await model.open(); Issue.record("invalid stored weekday accepted") }
-        catch is LibraryAccessError { }
+        do {
+            try await model.open()
+            Issue.record("invalid stored weekday accepted")
+        } catch is LibraryAccessError {}
         #expect(model.firstWeekday == nil)
         #expect(model.availability == .blocked)
         #expect(try Data(contentsOf: url) == bad)
@@ -141,14 +147,19 @@ private final class PreferenceObservation: @unchecked Sendable {
         try await model.open()
         let shared = model
         let observation = PreferenceObservation()
-        withObservationTracking { _ = shared.firstWeekday } onChange: { observation.changed() }
+        withObservationTracking {
+            _ = shared.firstWeekday
+        } onChange: {
+            observation.changed()
+        }
         let first = model.enqueueFirstWeekday(3)
         await gate.waitForArrival()
         first.cancel()
         #expect(model.firstWeekday == 2)
         #expect(observation.changes == 0)
         #expect(model.isBusy)
-        let command = model.enqueueSubmit(.createProject(id: UUID(), name: "Client", rate: 12, currency: "EUR"), expectedRevision: 0)
+        let command = model.enqueueSubmit(
+            .createProject(id: UUID(), name: "Client", rate: 12, currency: "EUR"), expectedRevision: 0)
         let failed = model.enqueueFirstWeekday(4)
         let last = model.enqueueFirstWeekday(5)
         let closing = model.enqueueClose()
@@ -174,10 +185,15 @@ private final class PreferenceObservation: @unchecked Sendable {
     @Test func reviewRequiredPreferencePreservesAllDomainAndTimeState() async throws {
         let directory = preferenceDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let project = UUID(), task = UUID(), entry = UUID()
-        let before = LibrarySnapshot(schemaVersion: 2, revision: 12,
+        let project = UUID()
+        let task = UUID()
+        let entry = UUID()
+        let before = LibrarySnapshot(
+            schemaVersion: 2, revision: 12,
             projects: [Project(id: project, name: "Client", hourlyRate: 25, currencyCode: "EUR")],
-            tasks: [TaskRecord(id: task, projectID: project, name: "Work", budgetMinutes: 100, lastWarnedThreshold: .eighty)],
+            tasks: [
+                TaskRecord(id: task, projectID: project, name: "Work", budgetMinutes: 100, lastWarnedThreshold: .eighty)
+            ],
             entries: [TimeEntry(id: entry, taskID: task, startAt: 10, endAt: nil)],
             activeTimer: ActiveTimer(entryID: entry, checkpointAt: 20),
             pendingSleepIntervals: [PendingSleepInterval(id: UUID(), taskID: task, sleepAt: 1, wakeAt: 5)])
@@ -198,7 +214,7 @@ private final class PreferenceObservation: @unchecked Sendable {
             let directory = preferenceDirectory()
             defer { try? FileManager.default.removeItem(at: directory) }
             let calls = PreferenceGate()
-            let hooks = RecoveryHooks(io: { point in
+            let hooks = RecoveryHooks(failureInjector: { point in
                 if point == (uncertain ? .settingsRenamed : .settingsWritten) {
                     throw PreferenceTestError.injected
                 }
@@ -214,11 +230,20 @@ private final class PreferenceObservation: @unchecked Sendable {
             let before = model.snapshot
             let shared = model
             let observation = PreferenceObservation()
-            withObservationTracking { _ = shared.firstWeekday } onChange: { observation.changed() }
-            do { try await model.setFirstWeekday(7); Issue.record("fault did not fail save") }
-            catch {
-                if uncertain { #expect((error as? LibraryAccessError) == .publicationIndeterminate) }
-                else { #expect((error as? PreferenceTestError) == .injected) }
+            withObservationTracking {
+                _ = shared.firstWeekday
+            } onChange: {
+                observation.changed()
+            }
+            do {
+                try await model.setFirstWeekday(7)
+                Issue.record("fault did not fail save")
+            } catch {
+                if uncertain {
+                    #expect((error as? LibraryAccessError) == .publicationIndeterminate)
+                } else {
+                    #expect((error as? PreferenceTestError) == .injected)
+                }
             }
             #expect(model.firstWeekday == 2)
             #expect(observation.changes == 0)

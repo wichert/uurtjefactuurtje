@@ -32,7 +32,8 @@ public enum SnapshotValidator {
     // BudgetRules reuses structural checks without recursively validating its own output.
     static func violations(in snapshot: LibrarySnapshot, now: Int64?, includingBudgets: Bool) -> [Violation] {
         guard unique(snapshot.projects.map(\.id)), unique(snapshot.tasks.map(\.id)),
-              unique(snapshot.entries.map(\.id)), unique(snapshot.pendingSleepIntervals.map(\.id)) else {
+            unique(snapshot.entries.map(\.id)), unique(snapshot.pendingSleepIntervals.map(\.id))
+        else {
             return [Violation(.duplicateID)]
         }
         var errors: [Violation] = []
@@ -53,8 +54,11 @@ public enum SnapshotValidator {
                 || task.budgetMinutes.map({ $0 <= 0 }) == true {
                 errors.append(Violation(.task, task.id))
             }
-            siblings[SiblingKey(project: task.projectID, parent: task.parentTaskID,
-                                name: NameKey.make(task.name)), default: []].append(task.id)
+            siblings[
+                SiblingKey(
+                    project: task.projectID, parent: task.parentTaskID,
+                    name: NameKey.make(task.name)), default: []
+            ].append(task.id)
             if let parentID = task.parentTaskID {
                 children[parentID, default: []].append(task.id)
                 if parentID == task.id || tasks[parentID]?.projectID != task.projectID {
@@ -115,8 +119,10 @@ public enum SnapshotValidator {
         let open = snapshot.entries.filter { $0.endAt == nil }
         if !open.isEmpty || snapshot.activeTimer != nil {
             if open.count == 1, let entry = open.first, let timer = snapshot.activeTimer,
-               timer.entryID == entry.id {
-                let prefix = timer.checkpointAt == entry.startAt ? nil
+                timer.entryID == entry.id {
+                let prefix =
+                    timer.checkpointAt == entry.startAt
+                    ? nil
                     : try? EntryInterval(startAt: entry.startAt, endAt: timer.checkpointAt)
                 let validCheckpoint = timer.checkpointAt == entry.startAt || prefix != nil
                 let validProject = tasks[entry.taskID].flatMap { projects[$0.projectID] }?.isArchived == false
@@ -135,7 +141,7 @@ public enum SnapshotValidator {
         }
         for pending in snapshot.pendingSleepIntervals {
             if let wake = pending.wakeAt,
-               (try? EntryInterval(startAt: pending.sleepAt, endAt: wake)) == nil {
+                (try? EntryInterval(startAt: pending.sleepAt, endAt: wake)) == nil {
                 errors.append(Violation(.pending, pending.id))
             }
         }
@@ -144,16 +150,19 @@ public enum SnapshotValidator {
         if includingBudgets && errors.isEmpty {
             do {
                 for allocation in try BudgetRules.allocations(in: snapshot)
-                    where allocation.allocatedMinutes > Decimal(allocation.limitMinutes) {
+                where allocation.allocatedMinutes > Decimal(allocation.limitMinutes) {
                     errors.append(Violation(.allocation, allocation.taskID))
                 }
                 let totals = try BudgetRules.usage(in: snapshot)
-                for task in snapshot.tasks where task.lastWarnedThreshold != BudgetRules.band(
-                    used: totals[task.id, default: 0], budget: task.budgetMinutes) {
+                for task in snapshot.tasks
+                where task.lastWarnedThreshold
+                    != BudgetRules.band(
+                        used: totals[task.id, default: 0], budget: task.budgetMinutes) {
                     errors.append(Violation(.warning, task.id))
                 }
-            } catch let LibraryError.invalid(violations) { errors += violations }
-            catch { errors.append(Violation(.allocation)) }
+            } catch let LibraryError.invalid(violations) { errors += violations } catch {
+                errors.append(Violation(.allocation))
+            }
         }
         return ordered(errors)
     }
@@ -176,8 +185,7 @@ public enum SnapshotValidator {
         var grouped: [Violation.Code: Set<UUID>] = [:]
         var whole = Set<Violation.Code>()
         for error in errors {
-            if let id = error.recordID { grouped[error.code, default: []].insert(id) }
-            else { whole.insert(error.code) }
+            if let id = error.recordID { grouped[error.code, default: []].insert(id) } else { whole.insert(error.code) }
         }
         return Violation.Code.allCases.flatMap { code in
             (whole.contains(code) ? [Violation(code)] : [])
