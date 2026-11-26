@@ -32,7 +32,7 @@ public enum SnapshotValidator {
     // BudgetRules reuses structural checks without recursively validating its own output.
     static func violations(in snapshot: LibrarySnapshot, now: Int64?, includingBudgets: Bool) -> [Violation] {
         guard unique(snapshot.projects.map(\.id)), unique(snapshot.tasks.map(\.id)),
-            unique(snapshot.entries.map(\.id)), unique(snapshot.pendingSleepIntervals.map(\.id))
+            unique(snapshot.entries.map(\.id))
         else {
             return [Violation(.duplicateID)]
         }
@@ -92,7 +92,7 @@ public enum SnapshotValidator {
         for entry in snapshot.entries where !isLeaf(entry.taskID) {
             errors.append(Violation(.ownership, entry.id))
         }
-        for pending in snapshot.pendingSleepIntervals where !isLeaf(pending.taskID) {
+        if let pending = snapshot.pendingSleepInterval, !isLeaf(pending.taskID) {
             errors.append(Violation(.ownership, pending.id))
         }
         var closed: [(entry: TimeEntry, interval: EntryInterval)] = []
@@ -135,11 +135,10 @@ public enum SnapshotValidator {
         for entry in open where closed.contains(where: { $0.interval.endAt > entry.startAt }) {
             errors.append(Violation(.overlap, entry.id))
         }
-        let unknown = snapshot.pendingSleepIntervals.filter { $0.wakeAt == nil }
-        if unknown.count > 1 || (!unknown.isEmpty && snapshot.activeTimer != nil) {
-            errors.append(Violation(.pending))
-        }
-        for pending in snapshot.pendingSleepIntervals {
+        if let pending = snapshot.pendingSleepInterval {
+            if pending.wakeAt == nil && snapshot.activeTimer != nil {
+                errors.append(Violation(.pending))
+            }
             if let wake = pending.wakeAt,
                 (try? EntryInterval(startAt: pending.sleepAt, endAt: wake)) == nil {
                 errors.append(Violation(.pending, pending.id))

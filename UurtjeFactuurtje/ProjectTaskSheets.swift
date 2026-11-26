@@ -314,7 +314,7 @@ struct TaskSheet: View {
             !snapshot.tasks.contains(where: { $0.parentTaskID == parent })
         else { return false }
         return snapshot.entries.contains { $0.taskID == parent }
-            || snapshot.pendingSleepIntervals.contains { $0.taskID == parent }
+            || snapshot.pendingSleepInterval?.taskID == parent
     }
     @ViewBuilder private var constraints: some View {
         if let snapshot = model.snapshot {

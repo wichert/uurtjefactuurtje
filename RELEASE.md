@@ -80,7 +80,7 @@ All boxes below intentionally remain unchecked: these checks were not observed.
 
 ### Track, editing and reports
 
-- [ ] Create/edit/archive/restore projects and nested tasks; exercise migration/Create & Start, guarded migration/correction/review Undo, stale drafts and explicit currency consent.
+- [ ] Create/edit/archive/restore projects and nested tasks; exercise migration/Create & Start, guarded migration/correction Undo, stale drafts and explicit currency consent.
 - [ ] Check ambiguous/nonexistent wall times, all conflict adjustments, unknown sleep/interrupted review and stop/re-preview; cancel without writing and confirm failed saves retain drafts/evidence.
 - [ ] Check zero-cell drilldown, Back, archive filters, weekday/time-zone/DST changes, lifetime versus period labels and provisional versus confirmed amounts. Switch Track/Reports and reopen windows to assess report navigation-state lifetime.
 - [ ] Check keyboard-only and VoiceOver navigation; narrow windows, light/dark, reduced motion, focus restoration and copyable failure details.
@@ -88,8 +88,8 @@ All boxes below intentionally remain unchecked: these checks were not observed.
 ### Native lifecycle
 
 - [ ] Close all workspace windows: status elapsed time/checkpointing and menu routes continue. Rapidly mix menu/editor/settings/Undo actions.
-- [ ] Quit with queued editor/settings work and running/paused/restored/pending time; exercise confirmation cancellation, stop failure, close failure, duplicate termination and explicit reopen without replay.
-- [ ] Perform physical repeated sleep/wake, including notifications during quit/drain; verify no invented billable gap or automatic restored continuation. Force termination and verify checkpoint-based recovery.
+- [ ] Quit with queued editor/settings work and running/paused/restored time; confirm unresolved recovery blocks quit. Exercise confirmation cancellation, stop failure, close failure, duplicate termination and explicit reopen without replay.
+- [ ] Perform physical sleep/wake and screen lock/unlock with a timer running, including sleep while locked. Verify one interactive modal with the task, elapsed time, and both Track Time and Don’t Track; only Track Time adds the interval. Repeat during quit/drain and while reviewing; verify no invented billable gap or automatic restored continuation. Force termination and verify checkpoint-based recovery.
 - [ ] Test notification permission denied/granted, Focus, combined warning content and click routing.
 
 ### Signed distribution and durability

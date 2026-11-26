@@ -272,7 +272,7 @@ import Testing
         let pending = PendingSleepInterval(id: UUID(), taskID: owner.id, sleepAt: 100, wakeAt: nil)
         let statement = LibrarySnapshot(
             schemaVersion: 2, revision: 0, projects: [project], tasks: [owner],
-            entries: [], activeTimer: nil, pendingSleepIntervals: [pending])
+            entries: [], activeTimer: nil, pendingSleepInterval: pending)
         #expect(throws: (any Error).self) { try SleepPlanner.include(pending, endAt: nil, in: statement) }
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = try #require(TimeZone(secondsFromGMT: 0))
@@ -295,7 +295,7 @@ import Testing
         let known = PendingSleepInterval(id: UUID(), taskID: owner.id, sleepAt: 100, wakeAt: 217)
         let knownSnapshot = LibrarySnapshot(
             schemaVersion: 2, revision: 0, projects: [project], tasks: [owner],
-            entries: [], activeTimer: nil, pendingSleepIntervals: [known])
+            entries: [], activeTimer: nil, pendingSleepInterval: known)
         let knownPlan = try SleepPlanner.include(known, endAt: nil, in: knownSnapshot)
         switch knownPlan.correction.draft {
         case .add(_, _, let start, let stop), .edit(_, _, let start, let stop):
@@ -311,25 +311,52 @@ import Testing
         let active = ActiveTimer(entryID: entry.id, checkpointAt: 90)
         let interrupted = LibrarySnapshot(
             schemaVersion: 2, revision: 0, projects: [project], tasks: [owner],
-            entries: [entry], activeTimer: active, pendingSleepIntervals: [])
+            entries: [entry], activeTimer: active, pendingSleepInterval: nil)
         #expect(try SleepPlanner.interruption(endAt: 90, in: interrupted).requestedEnd == 90)
         #expect(try SleepPlanner.interruption(endAt: nil, in: interrupted).correction == nil)
     }
+    @Test func failedReviewCommitKeepsSingleIssueAndRetainsEvidence() async throws {
+        try await withTrack { track, _ in
+            let projectID = try await project(track)
+            let leaf = try await task(track, project: projectID)
+            _ = try await track.workspace.enqueueTimer(.start(taskID: leaf)).value
+            track.workspace.requireInterruptedTimerReview(sleeping: false)
+            let before = try #require(track.workspace.snapshot)
+            let preview = try SleepPlanner.interruption(endAt: nil, in: before)
+            track.workspace.configureTimeReview { _, _, _, _, _ in throw StorageError.injectedFailure }
+            let controller = TimeReviewController(presentation: track) {
+                Issue.record("Failed save dismissed recovery")
+            }
+            let command = TimeReviewCommand.resolveInterruption(preview)
+            let submission = try #require(controller.submit(command))
+            await submission.value
+            #expect(controller.submitting == false)
+            if case .resolveInterruption = controller.command {} else { Issue.record("Review command lost") }
+            #expect(controller.stale && controller.error?.isEmpty == false)
+            #expect(controller.evidenceRevision == before.revision)
+            #expect(track.workspace.snapshot == before)
+            #expect(track.workspace.snapshot?.pendingSleepInterval == nil)
+            #expect(track.workspace.availability == .reviewRequired)
+        }
+    }
+
+    @Test func reviewLayoutRetainsRoomForTimesAndChoices() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("UurtjeFactuurtje/TimeReviewView.swift"), encoding: .utf8)
+        #expect(source.contains(".frame(minHeight: 120, maxHeight: .infinity)"))
+    }
+
     @Test func pinnedReviewLayoutPreservesEvidenceAndActionSemantics() throws {
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent().deletingLastPathComponent()
                 .appendingPathComponent("UurtjeFactuurtje/TimeReviewView.swift"), encoding: .utf8)
         #expect(source.range(of: "var body: some View {\\s*VStack", options: .regularExpression) != nil)
-        #expect(
-            source.range(
-                of: #"\}\s*\.frame\(maxWidth: \.infinity, maxHeight: \.infinity\)"# +
-                    #"\s*HStack \{\s*Button\("Cancel""#,
-                options: .regularExpression) != nil)
-        #expect(
-            source.range(
-                of: #"Button\("Confirm reviewed action"\) \{ confirm\(\) \}\s*\.disabled\(stale"#,
-                options: .regularExpression) != nil)
+        #expect(!source.contains("Button(\"Cancel\""))
+        #expect(!source.contains("Picker(\"Review item\""))
+        #expect(source.contains("enqueueTimeReview(command)"))
         #expect(source.contains("static func saveAndStop"))
         #expect(source.contains("static func interruptionSummary"))
     }

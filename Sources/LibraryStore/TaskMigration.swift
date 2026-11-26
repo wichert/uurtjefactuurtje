@@ -55,14 +55,14 @@ func createMigratingTask(
         id: base.id, projectID: base.projectID, parentTaskID: base.parentTaskID,
         name: base.name, budgetMinutes: request.budgetMinutes)
     let entries = before.entries.filter { $0.taskID == request.parentID }
-    let pending = before.pendingSleepIntervals.filter { $0.taskID == request.parentID }
+    let pending = before.pendingSleepInterval.flatMap { $0.taskID == request.parentID ? $0 : nil }
     let migrate =
         request.parentID != nil && !before.tasks.contains { $0.parentTaskID == request.parentID }
-        && (!entries.isEmpty || !pending.isEmpty)
+        && (!entries.isEmpty || pending != nil)
     guard before.activeTimer == nil || before.activeTimer?.entryID == ownedTimerEntryID else {
         throw CommandError.recoveryRequired
     }
-    guard before.pendingSleepIntervals.isEmpty || (!request.start && migrate && !pending.isEmpty) else {
+    guard before.pendingSleepInterval == nil || (!request.start && migrate && pending != nil) else {
         throw CommandError.recoveryRequired
     }
     if migrate && !request.confirmMigration { throw CommandError.migrationConfirmationRequired }
@@ -84,7 +84,7 @@ func createMigratingTask(
         entry.taskID == request.parentID && migrate
             ? TimeEntry(id: entry.id, taskID: generic!.id, startAt: entry.startAt, endAt: entry.endAt) : entry
     }
-    let movedPending = before.pendingSleepIntervals.map { interval in
+    let movedPending = before.pendingSleepInterval.map { interval in
         interval.taskID == request.parentID && migrate
             ? PendingSleepInterval(
                 id: interval.id, taskID: generic!.id,
@@ -96,7 +96,7 @@ func createMigratingTask(
     let interim = LibrarySnapshot(
         schemaVersion: before.schemaVersion, revision: before.revision,
         projects: before.projects, tasks: before.tasks + (generic.map { [$0] } ?? []) + [task],
-        entries: movedEntries, activeTimer: active, pendingSleepIntervals: movedPending)
+        entries: movedEntries, activeTimer: active, pendingSleepInterval: movedPending)
     // Checkpointing or moving usage can change derived bands; the common write tail reconciles them.
     let errors = SnapshotValidator.violations(in: interim).filter { $0.code != .warning }
     if errors.contains(where: { $0.code == .allocation }) {
@@ -121,7 +121,7 @@ func createMigratingTask(
             bindings: [key(generic.id), key(request.parentID!)], expectedChanges: entries.count)
         try database.runCommand(
             "UPDATE pending_sleep_intervals SET task_id=? WHERE task_id=?",
-            bindings: [key(generic.id), key(request.parentID!)], expectedChanges: pending.count)
+            bindings: [key(generic.id), key(request.parentID!)], expectedChanges: pending == nil ? 0 : 1)
     }
     try database.runCommand(
         "INSERT INTO tasks(id,project_id,parent_task_id,name,budget_minutes) VALUES (?,?,?,?,?)",
@@ -132,7 +132,7 @@ func createMigratingTask(
     try transition?.apply(to: database)
     return MigrationResult(
         genericID: generic?.id, entries: migrate ? entries.count : 0,
-        pending: migrate ? pending.count : 0)
+        pending: migrate && pending != nil ? 1 : 0)
 }
 
 struct MigrationReceipt: Sendable {
@@ -143,7 +143,7 @@ struct MigrationReceipt: Sendable {
     let requestedID: UUID
     let tasks: [UUID: TaskRecord]
     let entries: [UUID: TimeEntry]
-    let pending: [UUID: PendingSleepInterval]
+    let pending: PendingSleepInterval?
     let activeTimer: ActiveTimer?
 
     init(projectID: UUID, parentID: UUID, genericID: UUID, requestedID: UUID, snapshot: LibrarySnapshot) {
@@ -169,13 +169,7 @@ struct MigrationReceipt: Sendable {
                 )
             })
         entries = capturedEntries
-        pending = Dictionary(
-            uniqueKeysWithValues: snapshot.pendingSleepIntervals.filter { ids.contains($0.taskID) }.map {
-                (
-                    $0.id,
-                    $0
-                )
-            })
+        pending = snapshot.pendingSleepInterval.flatMap { ids.contains($0.taskID) ? $0 : nil }
         activeTimer = snapshot.activeTimer.flatMap { capturedEntries[$0.entryID] == nil ? nil : $0 }
     }
 
@@ -200,7 +194,7 @@ struct MigrationReceipt: Sendable {
             return "Task hierarchy changed"
         }
         guard !snapshot.entries.contains(where: { $0.taskID == requestedID }),
-            !snapshot.pendingSleepIntervals.contains(where: { $0.taskID == requestedID })
+            snapshot.pendingSleepInterval?.taskID != requestedID
         else {
             return "New task owns time or pending sleep"
         }
@@ -211,15 +205,9 @@ struct MigrationReceipt: Sendable {
                     $0
                 )
             })
-        let currentPending = Dictionary(
-            uniqueKeysWithValues: snapshot.pendingSleepIntervals.filter {
-                ids.contains($0.taskID) || pending[$0.id] != nil
-            }.map {
-                (
-                    $0.id,
-                    $0
-                )
-            })
+        let currentPending = snapshot.pendingSleepInterval.flatMap {
+            ids.contains($0.taskID) || pending?.id == $0.id ? $0 : nil
+        }
         let currentTimer = snapshot.activeTimer.flatMap { currentEntries[$0.entryID] == nil ? nil : $0 }
         guard currentEntries == entries, currentPending == pending, currentTimer == activeTimer else {
             return "Time, sleep or timer changed"
@@ -237,7 +225,7 @@ struct MigrationReceipt: Sendable {
                         startAt: $0.startAt, endAt: $0.endAt) : $0
             },
             activeTimer: snapshot.activeTimer,
-            pendingSleepIntervals: snapshot.pendingSleepIntervals.map {
+            pendingSleepInterval: snapshot.pendingSleepInterval.map {
                 $0.taskID == genericID
                     ? PendingSleepInterval(
                         id: $0.id,
@@ -258,7 +246,7 @@ struct MigrationReceipt: Sendable {
             expectedChanges: snapshot.entries.filter { $0.taskID == genericID }.count)
         try database.runCommand(
             "UPDATE pending_sleep_intervals SET task_id=? WHERE task_id=?", bindings: [key(parentID), key(genericID)],
-            expectedChanges: snapshot.pendingSleepIntervals.filter { $0.taskID == genericID }.count)
+            expectedChanges: snapshot.pendingSleepInterval?.taskID == genericID ? 1 : 0)
         try database.runCommand("DELETE FROM tasks WHERE id=?", bindings: [key(requestedID)], expectedChanges: 1)
         try database.runCommand("DELETE FROM tasks WHERE id=?", bindings: [key(genericID)], expectedChanges: 1)
     }

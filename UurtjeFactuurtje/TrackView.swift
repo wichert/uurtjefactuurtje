@@ -10,13 +10,6 @@ struct TrackView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let count = model.snapshot?.pendingSleepIntervals.count, count > 0 {
-                HStack {
-                    Text("\(count) pending sleep interval(s) — unbilled")
-                    Spacer()
-                    Button("Review pending time…") { presentation.reviewTime() }
-                }
-            }
             HStack {
                 Button("New project") { presentation.editProject() }
                 Button("New task") { newTask() }.disabled(!canCreateTask)
@@ -173,7 +166,7 @@ struct TrackView: View {
                     if let stop = presentation.ownedStop {
                         Button("Stop") { presentation.timer(stop) }.disabled(model.isBusy)
                     } else {
-                        Button("Review interruption") { presentation.reviewTime() }
+                        Text("Interrupted time must be resolved before tracking continues.")
                     }
                     Button("Reveal running task") { presentation.revealTask(row.taskID) }
                 }
@@ -248,8 +241,6 @@ struct TrackControlCommands: ToolbarContent {
             Menu("Time and history") {
                 Button("Undo time correction") { presentation.undoCorrection() }
                     .disabled(presentation.workspace.isBusy || !presentation.workspace.canUndoCorrection)
-                Button("Undo time review") { presentation.undoTimeReview() }
-                    .disabled(presentation.workspace.isBusy || !presentation.workspace.canUndoTimeReview)
                 if case .available(let receiptID) = presentation.workspace.migrationUndoAvailability {
                     Button("Undo first-child migration") { presentation.undoMigration(receiptID: receiptID) }
                         .disabled(presentation.workspace.isBusy)

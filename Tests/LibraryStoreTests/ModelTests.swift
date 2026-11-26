@@ -11,7 +11,7 @@ import Testing
     let pending = PendingSleepInterval(id: UUID(), taskID: task.id, sleepAt: 1, wakeAt: nil)
     let snapshot = LibrarySnapshot(
         schemaVersion: 2, revision: 4, projects: [project], tasks: [task],
-        entries: [entry], activeTimer: active, pendingSleepIntervals: [pending])
+        entries: [entry], activeTimer: active, pendingSleepInterval: pending)
     let copy = await Task.detached { snapshot }.value
     #expect(copy == snapshot)
     #expect(copy.projects[0].hourlyRate == Decimal(string: "123.456789")!)
@@ -20,7 +20,7 @@ import Testing
     #expect(task.lastWarnedThreshold == .none)
     #expect(WarningThreshold.allCases.map(\.rawValue) == [0, 80, 100])
     #expect(snapshot.entries[0].endAt == nil)
-    #expect(snapshot.pendingSleepIntervals[0].wakeAt == nil)
+    #expect(snapshot.pendingSleepInterval?.wakeAt == nil)
 }
 
 @Test func nameKeysFoldCaseAndCanonicalUnicodeWithoutRemovingAccents() {

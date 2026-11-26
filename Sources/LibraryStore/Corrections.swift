@@ -366,7 +366,7 @@ struct CorrectionMutation: Sendable {
             projects: state.projects, tasks: state.tasks,
             entries: state.entries.filter { !afterIDs.contains($0.id) } + receipt.before,
             activeTimer: state.activeTimer,
-            pendingSleepIntervals: state.pendingSleepIntervals)
+            pendingSleepInterval: state.pendingSleepInterval)
         guard SnapshotValidator.violations(in: candidate, now: nil).allSatisfy({ $0.code == .warning }) else {
             throw CorrectionError.undoUnavailable
         }

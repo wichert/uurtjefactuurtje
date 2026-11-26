@@ -313,7 +313,7 @@ extension ReportsPresentationTests {
                         name: "Grandchild", budgetMinutes: 1),
                     TaskRecord(
                         id: sibling, projectID: projectID, parentTaskID: root, name: "Sibling", budgetMinutes: second)
-                ], entries: [], activeTimer: nil, pendingSleepIntervals: [])
+                ], entries: [], activeTimer: nil, pendingSleepInterval: nil)
         }
         let locale = Locale(identifier: "en_US_POSIX")
         let exact = try BudgetRules.allocations(in: snapshot(60, 30, 30))

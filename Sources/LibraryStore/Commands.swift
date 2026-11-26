@@ -43,7 +43,7 @@ func taskForInsertion(
 
 extension Library {
     public func perform(_ command: WorkspaceCommand, expectedRevision: Int64) async throws -> LibrarySnapshot {
-        try await performOwned(command, expectedRevision: expectedRevision, ownedTimerEntryID: nil)
+        return try await performOwned(command, expectedRevision: expectedRevision, ownedTimerEntryID: nil)
     }
 
     func performOwned(
@@ -55,10 +55,10 @@ extension Library {
         ) { database, before in
             if case .createTask(_, let projectID, let parentID?, _, _) = command,
                 before.tasks.contains(where: { $0.id == parentID && $0.projectID == projectID }),
-                before.pendingSleepIntervals.contains(where: { $0.taskID == parentID }) {
+                before.pendingSleepInterval?.taskID == parentID {
                 throw CommandError.migrationRequired
             }
-            guard before.pendingSleepIntervals.isEmpty,
+            guard before.pendingSleepInterval == nil,
                 before.activeTimer == nil || before.activeTimer?.entryID == ownedTimerEntryID
             else {
                 throw CommandError.recoveryRequired
@@ -78,7 +78,7 @@ extension Library {
                     schemaVersion: before.schemaVersion, revision: before.revision,
                     projects: projects ?? before.projects, tasks: tasks ?? before.tasks,
                     entries: before.entries, activeTimer: before.activeTimer,
-                    pendingSleepIntervals: before.pendingSleepIntervals)
+                    pendingSleepInterval: before.pendingSleepInterval)
                 let errors = SnapshotValidator.violations(in: candidate).filter { $0.code != .warning }
                 if errors.contains(where: { $0.code == .allocation }) {
                     let editedID: UUID?
@@ -149,7 +149,7 @@ extension Library {
                     name: base.name, budgetMinutes: budgetMinutes)
                 if let parentID {
                     guard !before.entries.contains(where: { $0.taskID == parentID }),
-                        !before.pendingSleepIntervals.contains(where: { $0.taskID == parentID })
+                        before.pendingSleepInterval?.taskID != parentID
                     else {
                         throw CommandError.migrationRequired
                     }

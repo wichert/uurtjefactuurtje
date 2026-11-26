@@ -39,7 +39,7 @@ struct TimeReviewReceipt: Equatable, Sendable {
 public enum SleepPlanner {
     public static func skip(_ pending: PendingSleepInterval, in state: LibrarySnapshot) throws -> SleepSkipPreview {
         try SnapshotValidator.validate(state, now: nil)
-        guard state.pendingSleepIntervals.contains(pending),
+        guard state.pendingSleepInterval == pending,
             let path = CorrectionPlanner.path(for: pending.taskID, in: state),
             !state.tasks.contains(where: { $0.parentTaskID == pending.taskID })
         else { throw SleepError.staleReview }
@@ -91,7 +91,7 @@ public enum SleepPlanner {
         let virtual = LibrarySnapshot(
             schemaVersion: state.schemaVersion, revision: state.revision,
             projects: state.projects, tasks: state.tasks, entries: state.entries.filter { $0.id != entryID },
-            activeTimer: nil, pendingSleepIntervals: state.pendingSleepIntervals)
+            activeTimer: nil, pendingSleepInterval: state.pendingSleepInterval)
         // Removing the checkpoint prefix changes derived warning bands in this preview-only view.
         let totals = try BudgetRules.usage(in: virtual)
         let tasks = state.tasks.map {
@@ -103,7 +103,7 @@ public enum SleepPlanner {
         return LibrarySnapshot(
             schemaVersion: virtual.schemaVersion, revision: virtual.revision,
             projects: virtual.projects, tasks: tasks, entries: virtual.entries, activeTimer: nil,
-            pendingSleepIntervals: virtual.pendingSleepIntervals)
+            pendingSleepInterval: virtual.pendingSleepInterval)
     }
 }
 
@@ -205,8 +205,7 @@ struct TimeReviewMutation: Sendable {
         let afterIDs = Set(after.map(\.id))
         guard after.allSatisfy({ current[$0.id] == $0 }),
             before.allSatisfy({ afterIDs.contains($0.id) || current[$0.id] == nil }),
-            receipt.pending.map({ pending in !state.pendingSleepIntervals.contains(where: { $0.id == pending.id }) })
-                ?? true,
+            receipt.pending == nil || state.pendingSleepInterval == nil,
             receipt.active == nil || state.activeTimer == nil
         else { throw SleepError.undoUnavailable }
         let restoredTasks = Set(before.map(\.taskID) + (receipt.pending.map { [$0.taskID] } ?? []))
@@ -232,7 +231,7 @@ struct TimeReviewMutation: Sendable {
             projects: state.projects, tasks: state.tasks,
             entries: state.entries.filter { !afterIDs.contains($0.id) } + before,
             activeTimer: receipt.active ?? state.activeTimer,
-            pendingSleepIntervals: state.pendingSleepIntervals + (receipt.pending.map { [$0] } ?? []))
+            pendingSleepInterval: state.pendingSleepInterval ?? receipt.pending)
         guard SnapshotValidator.violations(in: candidate, now: nil).allSatisfy({ $0.code == .warning }) else {
             throw SleepError.undoUnavailable
         }

@@ -592,7 +592,7 @@ extension RecoveryTests {
                 #expect(state.tasks.first?.id == task && state.tasks.first?.budgetMinutes == 1)
                 #expect(state.tasks.first?.lastWarnedThreshold == WarningThreshold.none)
                 #expect(state.entries == [TimeEntry(id: entry, taskID: task, startAt: 0, endAt: 1)])
-                #expect(state.activeTimer == nil && state.pendingSleepIntervals.isEmpty)
+                #expect(state.activeTimer == nil && state.pendingSleepInterval == nil)
                 await recovered.close()
                 let published = try Data(contentsOf: main)
                 if let readyBytes { #expect(published == readyBytes) }

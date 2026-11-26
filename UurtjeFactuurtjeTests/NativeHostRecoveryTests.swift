@@ -47,7 +47,7 @@ extension NativeHostTests {
             (.unsafeLibrary, "could not be opened safely"),
             (.invalidStorage, "unsupported format"),
             (.revisionConflict, "library changed"),
-            (.recoveryRequired, "Time needs review"),
+            (.recoveryRequired, "Resolve interrupted time"),
             (.uncertainSave, "may or may not have been saved"),
             (.command(.missingRecord), "action could not be completed"),
             (.validation([Violation(.interval)]), "data that could not be accepted"),

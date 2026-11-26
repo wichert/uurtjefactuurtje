@@ -41,12 +41,12 @@ import Testing
         version: Int64 = 2, revision: Int64 = 0, projects: [Project]? = nil,
         tasks: [TaskRecord]? = nil, entries: [TimeEntry] = [],
         timer: ActiveTimer? = nil,
-        sleep: [PendingSleepInterval] = []
+        sleep: PendingSleepInterval? = nil
     ) -> LibrarySnapshot {
         LibrarySnapshot(
             schemaVersion: version, revision: revision, projects: projects ?? [project],
             tasks: tasks ?? [task()], entries: entries, activeTimer: timer,
-            pendingSleepIntervals: sleep)
+            pendingSleepInterval: sleep)
     }
 
     private func errors(_ value: LibrarySnapshot, now: Int64? = nil) -> [Violation] {
@@ -81,8 +81,7 @@ import Testing
         let values = [
             snapshot(version: 9, projects: [duplicateProject, duplicateProject]),
             snapshot(tasks: [duplicateTask, duplicateTask]),
-            snapshot(entries: [duplicateEntry, duplicateEntry]),
-            snapshot(sleep: [duplicatePending, duplicatePending])
+            snapshot(entries: [duplicateEntry, duplicateEntry])
         ]
         for value in values { #expect(errors(value) == [Violation(.duplicateID)]) }
         // IDs are scoped to timer collection, not timer whole snapshot.
@@ -90,7 +89,7 @@ import Testing
             errors(
                 snapshot(
                     tasks: [task(1)], entries: [entry(1, owner: 1)],
-                    sleep: [pending(1, owner: 1)])
+                    sleep: pending(1, owner: 1))
             ).isEmpty)
     }
 
@@ -142,7 +141,7 @@ import Testing
             errors(
                 snapshot(
                     tasks: [task(budget: 0)], entries: [entry(end: 0)],
-                    sleep: [pending(owner: 999)])) == [Violation(.task, id(2))])
+                    sleep: pending(owner: 999))) == [Violation(.task, id(2))])
     }
 
     @Test func arbitraryDepthIsIterative() {
@@ -168,16 +167,15 @@ import Testing
             entry(10, start: 0, end: 100), entry(11, start: 0, end: 10),
             entry(12, start: 20, end: 30), entry(13, start: 100, end: 110)
         ]
-        let value = snapshot(version: 1, entries: rows, sleep: [pending(20, end: 0), pending(21, end: 0)])
+        let value = snapshot(version: 1, entries: rows, sleep: pending(20, end: 0))
         let reversed = snapshot(
             version: 1, entries: rows.reversed(),
-            sleep: [pending(21, end: 0), pending(20, end: 0)])
+            sleep: pending(20, end: 0))
         #expect(errors(value) == errors(reversed))
         #expect(
             errors(value) == [
                 Violation(.metadata), Violation(.overlap, id(11)),
-                Violation(.overlap, id(12)), Violation(.pending, id(20)),
-                Violation(.pending, id(21))
+                Violation(.overlap, id(12)), Violation(.pending, id(20))
             ])
         let other = Project(id: id(50), name: "Other", hourlyRate: -1, currencyCode: "eur")
         #expect(errors(snapshot(projects: [project, other])) == errors(snapshot(projects: [other, project])))
@@ -189,9 +187,9 @@ import Testing
             errors(
                 snapshot(
                     tasks: tasks, entries: [entry(), entry(11, owner: 999, start: 10, end: 20)],
-                    sleep: [pending(), pending(21, owner: 999)])) == [
+                    sleep: pending(21, owner: 999))) == [
                     Violation(.ownership, id(10)), Violation(.ownership, id(11)),
-                    Violation(.ownership, id(20)), Violation(.ownership, id(21))
+                    Violation(.ownership, id(21))
                 ])
     }
 
@@ -248,7 +246,7 @@ import Testing
         let open = entry(11, start: 10, end: nil)
         let value = snapshot(
             entries: [entry(), open], timer: ActiveTimer(entryID: open.id, checkpointAt: 100),
-            sleep: [pending(start: 200, end: 300)])
+            sleep: pending(start: 200, end: 300))
         #expect(errors(value).isEmpty)
         #expect(errors(value, now: 5) == [Violation(.interval, id(10))])
         #expect(errors(value, now: 10).isEmpty)
@@ -256,17 +254,16 @@ import Testing
 
     @Test func pendingKnownUnknownAndUnbilled() {
         for row in [pending(end: 0), pending(start: 10, end: 9), pending(start: .min, end: .max)] {
-            #expect(errors(snapshot(sleep: [row])) == [Violation(.pending, id(20))])
+            #expect(errors(snapshot(sleep: row)) == [Violation(.pending, id(20))])
         }
-        #expect(errors(snapshot(entries: [entry()], sleep: [pending(), pending(21, end: nil)])).isEmpty)
-        #expect(errors(snapshot(sleep: [pending(end: nil), pending(21, end: nil)])) == [Violation(.pending)])
+        #expect(errors(snapshot(entries: [entry()], sleep: pending())).isEmpty)
         let open = entry(end: nil)
         #expect(
             errors(
                 snapshot(
                     entries: [open], timer: ActiveTimer(entryID: open.id, checkpointAt: 0),
-                    sleep: [pending(end: nil)])) == [Violation(.pending)])
-        #expect(errors(snapshot(tasks: [task(budget: 10)], sleep: [pending(end: 100)])).isEmpty)
+                    sleep: pending(end: nil))) == [Violation(.pending)])
+        #expect(errors(snapshot(tasks: [task(budget: 10)], sleep: pending(end: 100))).isEmpty)
     }
 
     @Test func frontierEqualityExcessAndNearestBudgetStops() {

@@ -181,8 +181,8 @@ extension NativeHostTests {
             var closes = 0
             var replies = 0
             lifecycle.confirmQuit = {
-                #expect(track.workspace.snapshot?.pendingSleepIntervals.first?.sleepAt == 110)
-                #expect(track.workspace.snapshot?.pendingSleepIntervals.first?.wakeAt == nil)
+                #expect(track.workspace.snapshot?.pendingSleepInterval?.sleepAt == 110)
+                #expect(track.workspace.snapshot?.pendingSleepInterval?.wakeAt == nil)
                 #expect(!track.workspace.isBusy)
                 return false
             }
@@ -200,14 +200,17 @@ extension NativeHostTests {
             }
             #expect(closes == 0 && replies == 1 && host.acceptingMutations)
             #expect(track.workspace.snapshot?.activeTimer == nil)
-            #expect(track.workspace.snapshot?.pendingSleepIntervals.first?.wakeAt == nil)
+            #expect(track.workspace.snapshot?.pendingSleepInterval?.wakeAt == nil)
             host.invalidate()
         }
     }
 
-    @Test func restoredUnownedTimerClosesUnchanged() async throws {
+    @Test func restoredUnownedTimerBlocksQuitUnchanged() async throws {
         try await withTrack { track, directory in
             let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
+            host.recoveryPresentationHandler = { _ in }
+            host.installSceneActions(workspace: {}, settings: {})
             let projectID = try await project(track)
             let id = try await task(track, project: projectID)
             host.submitTimer(.start(taskID: id))
@@ -215,31 +218,13 @@ extension NativeHostTests {
             await track.workspace.close()
             try await track.workspace.open()
             let before = try #require(track.workspace.snapshot)
-            #expect(before.activeTimer != nil && host.track.ownedStop == nil)
-            let writes = NativeQuitWriteProbe()
-            track.workspace.configureTimer(
-                clock: { 999 },
-                write: { _, _, _, _, _ in
-                    writes.record()
-                    throw StorageError.injectedFailure
-                })
+            #expect(before.activeTimer != nil && host.recoveryPresented)
             let lifecycle = Lifecycle(host: host)
-            lifecycle.confirmQuit = { true }
-            lifecycle.close = { model in
-                #expect(model.snapshot == before)
-                await model.close()
-            }
-            await withCheckedContinuation { done in
-                lifecycle.reply = { accepted in
-                    #expect(accepted)
-                    done.resume()
-                }
-                lifecycle.requestQuit()
-            }
-            #expect(writes.count == 0)
-            try await track.workspace.open()
+            var replies = 0
+            lifecycle.reply = { accepted in #expect(!accepted); replies += 1 }
+            lifecycle.requestQuit()
+            #expect(replies == 1)
             #expect(track.workspace.snapshot == before)
-            host.invalidate()
         }
     }
 
@@ -303,6 +288,7 @@ extension NativeHostTests {
             let active = try #require(before.activeTimer)
             #expect(track.workspace.timerStatus == .paused(entryID: active.entryID))
             let lifecycle = Lifecycle(host: host)
+            host.recoveryPresentationHandler = { _ in }
             host.installSceneActions(workspace: {}, settings: {})
             let counters = FailedCloseCounters()
             await runFailedClose(
@@ -372,7 +358,7 @@ extension NativeHostTests {
         state: FailedCloseState
     ) {
         #expect(state.closes == 1 && state.replies == 1 && writes.count == 1)
-        #expect(host.acceptingMutations && track.workspace.snapshot == state.before)
+        #expect(!host.acceptingMutations && track.workspace.snapshot == state.before)
         #expect(host.track.ownedStop == nil)
         #expect(track.workspace.timerStatus == .reviewRequired)
         #expect(track.workspace.timerLifecycleGate.state().sleeping == !state.wakeDuringClose)
@@ -383,13 +369,10 @@ extension NativeHostTests {
         before: LibrarySnapshot
     ) throws {
         #expect(writes.count == 1 && track.workspace.snapshot == before)
-        #expect(track.workspace.snapshot?.pendingSleepIntervals.isEmpty == true)
+        #expect(track.workspace.snapshot?.pendingSleepInterval == nil)
         #expect(track.workspace.timerStatus == .reviewRequired)
-        guard case .timeReview = host.track.sheet else {
-            Issue.record("Missing failed-close review")
-            return
-        }
-        #expect(!host.pendingAutoReview && host.track.failure?.contains("Close failed") == true)
+        #expect(host.recoveryPresented)
+        #expect(host.track.failure?.contains("Close failed") == true)
         #expect(writes.count == 1 && track.workspace.snapshot == before)
     }
 }

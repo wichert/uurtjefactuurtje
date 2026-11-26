@@ -12,7 +12,7 @@ extension EditorFlowTests {
         let active = ActiveTimer(entryID: entry.id, checkpointAt: 137)
         let snapshot = LibrarySnapshot(
             schemaVersion: 2, revision: 0, projects: [project], tasks: [task],
-            entries: [entry], activeTimer: active, pendingSleepIntervals: [])
+            entries: [entry], activeTimer: active, pendingSleepInterval: nil)
         let review = try SleepPlanner.interruption(endAt: nil, in: snapshot)
         let zone = try #require(TimeZone(secondsFromGMT: 0))
         let summary = TimeReviewView.interruptionSummary(review, zone: zone)

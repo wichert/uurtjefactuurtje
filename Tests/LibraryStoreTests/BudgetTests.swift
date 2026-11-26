@@ -9,12 +9,12 @@ import Testing
 
     private func snapshot(
         tasks: [TaskRecord], entries: [TimeEntry] = [], timer: ActiveTimer? = nil,
-        pending: [PendingSleepInterval] = []
+        pending: PendingSleepInterval? = nil
     ) -> LibrarySnapshot {
         LibrarySnapshot(
             schemaVersion: 2, revision: 0,
             projects: [Project(id: budgetProjectID, name: "Client", hourlyRate: 1, currencyCode: "EUR")],
-            tasks: tasks, entries: entries, activeTimer: timer, pendingSleepIntervals: pending)
+            tasks: tasks, entries: entries, activeTimer: timer, pendingSleepInterval: pending)
     }
 
     private func task(
@@ -121,7 +121,7 @@ import Testing
             TimeEntry(id: UUID(), taskID: other, startAt: -800, endAt: -780),
             TimeEntry(id: openID, taskID: leaf, startAt: 0, endAt: nil)
         ]
-        let pending = [PendingSleepInterval(id: UUID(), taskID: leaf, sleepAt: -500, wakeAt: -400)]
+        let pending = PendingSleepInterval(id: UUID(), taskID: leaf, sleepAt: -500, wakeAt: -400)
         let value = snapshot(
             tasks: rows, entries: entries,
             timer: ActiveTimer(entryID: openID, checkpointAt: 30), pending: pending)

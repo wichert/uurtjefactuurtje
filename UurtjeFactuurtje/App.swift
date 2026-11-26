@@ -55,9 +55,6 @@ import SwiftUI
             Button("Open Reports") {
                 host.openReports()
             }
-            Button("Review time…") {
-                host.openReview()
-            }
         }
     }
 }

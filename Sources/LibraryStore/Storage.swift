@@ -250,7 +250,7 @@ private let schema: [(String, String, String)] = [
     ("index", "sleep_by_task", "CREATE INDEX sleep_by_task ON pending_sleep_intervals(task_id)"),
     (
         "index", "one_unknown_wake",
-        "CREATE UNIQUE INDEX one_unknown_wake ON pending_sleep_intervals((1)) WHERE wake_at IS NULL"
+        "CREATE UNIQUE INDEX one_unknown_wake ON pending_sleep_intervals((1))"
     ),
     (
         "trigger", "active_timer_insert_valid",
@@ -272,7 +272,13 @@ private let schemaV1: [(String, String, String)] = schema.map { type, name, sql 
     (
         type, name,
         name == "tasks"
-            ? sql.replacingOccurrences(of: "budget_minutes", with: "budget_seconds") : sql
+            ? sql.replacingOccurrences(of: "budget_minutes", with: "budget_seconds")
+            : name == "one_unknown_wake"
+                ? sql.replacingOccurrences(
+                    of: " ON pending_sleep_intervals((1))",
+                    with: " ON pending_sleep_intervals((1)) WHERE wake_at IS NULL"
+                )
+                : sql
     )
 }
 
@@ -355,9 +361,10 @@ private func decodeSnapshot(_ database: SQLConnection) throws -> LibrarySnapshot
             id: uuid(statement, 0), taskID: uuid(statement, 1), sleepAt: integer(statement, 2),
             wakeAt: optionalInteger(statement, 3))
     }
+    guard pending.count <= 1 else { throw StorageError.invalidStorage("pending singleton") }
     let snapshot = LibrarySnapshot(
         schemaVersion: meta[0].1, revision: meta[0].2, projects: projects, tasks: tasks,
-        entries: entries, activeTimer: timers.first?.1, pendingSleepIntervals: pending)
+        entries: entries, activeTimer: timers.first?.1, pendingSleepInterval: pending.first)
     return snapshot
 }
 
@@ -381,6 +388,9 @@ private func migrateV1(_ database: SQLConnection) throws {
         """)
     try database.exec("UPDATE library_metadata SET schema_version=2 WHERE id=1")
     guard database.changes == 1 else { throw StorageError.invalidStorage("metadata singleton") }
+    // Recovery now has exactly one durable issue; existing single-row data needs no value rewrite.
+    try database.exec("DROP INDEX one_unknown_wake")
+    try database.exec("CREATE UNIQUE INDEX one_unknown_wake ON pending_sleep_intervals((1))")
     try checkSchema(database)
     try checkIntegrity(database)
     let candidate = try decodeSnapshot(database)

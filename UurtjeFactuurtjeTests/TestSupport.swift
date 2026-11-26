@@ -27,6 +27,8 @@ func fixtureTemporaryDirectory() -> URL {
     do {
         try await model.open()
         try await body(track, directory)
+        // Tests can close and inspect a library directly; leave a clean owner for the next test.
+        if model.availability == .closed { try await model.open() }
         await model.close()
     } catch {
         await model.close()

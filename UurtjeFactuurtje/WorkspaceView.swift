@@ -62,7 +62,6 @@ struct WorkspaceView<ReportsContent: View>: View {
         case .project(let draft): ProjectSheet(presentation: presentation, token: token, draft: draft)
         case .task(let draft): TaskSheet(presentation: presentation, token: token, draft: draft)
         case .correction(let route): CorrectionSheet(presentation: presentation, route: route, token: token)
-        case .timeReview: TimeReviewView(presentation: presentation, token: token)
         }
     }
 }
@@ -113,7 +112,7 @@ struct WorkspaceRecovery: View {
                 }
                 if host.available, host.workspace.snapshot != nil {
                     if host.workspace.availability == .reviewRequired || host.workspace.issue == .recoveryRequired {
-                        Button("Review time…") { host.openReview() }
+                        EmptyView()
                     } else if host.hasUncertainPublication || host.workspace.issue != nil
                         || host.reopenFailure != nil || host.track.failure != nil {
                         Button("Open Track to inspect") { host.openTrack() }

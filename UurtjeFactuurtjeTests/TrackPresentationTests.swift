@@ -104,7 +104,7 @@ import Testing
             let adjacent = TimeEntry(id: UUID(), taskID: owner, startAt: lowerBound - 120, endAt: lowerBound)
             let statement = LibrarySnapshot(
                 schemaVersion: 2, revision: 0, projects: [], tasks: [],
-                entries: [crossing, adjacent], activeTimer: nil, pendingSleepIntervals: [])
+                entries: [crossing, adjacent], activeTimer: nil, pendingSleepInterval: nil)
             let rows = TrackPresentation.todayEntries(in: statement, now: noon, calendar: calendar)
             #expect(rows == [crossing])
             #expect(rows[0].startAt == lowerBound - 60)
@@ -126,7 +126,7 @@ import Testing
             #expect(!track.acceptedWork)
             #expect(track.failure != nil)
             track.cancelSheet()
-            track.reviewTime()
+            track.editProject()
             let replacement = track.routeToken
             track.complete(token)
             #expect(track.routeToken == replacement)

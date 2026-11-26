@@ -78,8 +78,8 @@ enum RecoveryMessage {
         switch issue {
         case .recoveryRequired:
             return """
-                Time needs review before this action can continue. Open time review and inspect \
-                the timer and any pending intervals. Pending sleep time is unbilled.
+                Resolve interrupted time in the required panel before continuing. Pending sleep \
+                time is unbilled; no stored interval is included or discarded automatically.
                 """
         case .command:
             return """
@@ -133,7 +133,7 @@ enum RecoveryMessage {
                 """
         case .reviewRequired:
             return """
-                Time needs review. Inspect the timer and any pending intervals; pending sleep time is unbilled.
+                Resolve interrupted time in the required panel before continuing; pending sleep time is unbilled.
                 """
         case .ready:
             return """

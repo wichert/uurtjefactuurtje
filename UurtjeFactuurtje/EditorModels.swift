@@ -31,13 +31,11 @@ enum TrackSheet: Identifiable {
     case project(ProjectDraft)
     case task(TaskDraft)
     case correction(CorrectionRoute)
-    case timeReview(UUID)
     var id: UUID {
         switch self {
         case .project(let draft): draft.id
         case .task(let draft): draft.id
         case .correction(let route): route.id
-        case .timeReview(let id): id
         }
     }
 }

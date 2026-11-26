@@ -92,12 +92,12 @@ public struct LibrarySnapshot: Equatable, Sendable {
     public let tasks: [TaskRecord]
     public let entries: [TimeEntry]
     public let activeTimer: ActiveTimer?
-    public let pendingSleepIntervals: [PendingSleepInterval]
+    public let pendingSleepInterval: PendingSleepInterval?
 
     public init(
         schemaVersion: Int64, revision: Int64, projects: [Project], tasks: [TaskRecord],
         entries: [TimeEntry], activeTimer: ActiveTimer?,
-        pendingSleepIntervals: [PendingSleepInterval]
+        pendingSleepInterval: PendingSleepInterval?
     ) {
         self.schemaVersion = schemaVersion
         self.revision = revision
@@ -105,7 +105,7 @@ public struct LibrarySnapshot: Equatable, Sendable {
         self.tasks = tasks
         self.entries = entries
         self.activeTimer = activeTimer
-        self.pendingSleepIntervals = pendingSleepIntervals
+        self.pendingSleepInterval = pendingSleepInterval
     }
 }
 
@@ -160,7 +160,7 @@ extension LibrarySnapshot {
                         name: $0.name, budgetMinutes: $0.budgetMinutes, lastWarnedThreshold: .none)
                 }, entries: value.entries,
                 activeTimer: value.activeTimer.map { ActiveTimer(entryID: $0.entryID, checkpointAt: 0) },
-                pendingSleepIntervals: value.pendingSleepIntervals)
+                pendingSleepInterval: value.pendingSleepInterval)
         }
         return reviewed(self) == reviewed(other)
     }

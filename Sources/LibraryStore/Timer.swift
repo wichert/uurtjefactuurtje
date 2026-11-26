@@ -100,7 +100,7 @@ struct TimerTransition: Sendable {
         let active = before.activeTimer
         let current = active.flatMap { timer in before.entries.first { $0.id == timer.entryID && $0.endAt == nil } }
         guard active == nil || current != nil else { throw TimerError.activeEntryChanged }
-        if before.pendingSleepIntervals.contains(where: { $0.wakeAt == nil }) {
+        if before.pendingSleepInterval.map({ $0.wakeAt == nil }) ?? false {
             switch operation {
             case .stop, .stopAtCheckpoint: break
             case .start, .checkpoint: throw TimerError.reviewRequired
@@ -196,7 +196,7 @@ extension TimerLifecycleGate {
         in state: LibrarySnapshot, ownedEntryID: UUID?, paused: Bool,
         clock: @Sendable () throws -> Int64
     ) throws -> (generation: UInt64, instant: Int64) {
-        guard !paused, state.pendingSleepIntervals.isEmpty,
+        guard !paused, state.pendingSleepInterval == nil,
             state.activeTimer == nil || state.activeTimer?.entryID == ownedEntryID
         else {
             throw TimerError.reviewRequired
@@ -245,7 +245,7 @@ extension Library {
                 guard let active = before.activeTimer, active.entryID == entryID,
                     let entry = before.entries.first(where: { $0.id == entryID && $0.endAt == nil }),
                     boundary >= active.checkpointAt,
-                    !before.pendingSleepIntervals.contains(where: { $0.wakeAt == nil })
+                    before.pendingSleepInterval.map({ $0.wakeAt != nil }) ?? true
                 else {
                     throw TimerError.reviewRequired
                 }
@@ -257,7 +257,7 @@ extension Library {
                     "INSERT INTO pending_sleep_intervals(id,task_id,sleep_at,wake_at) VALUES (?,?,?,NULL)",
                     bindings: [key(pendingID), key(entry.taskID), .integer(boundary)], expectedChanges: 1)
             case .wake(let pending, let observedAt, let entryID):
-                guard before.pendingSleepIntervals.contains(pending), pending.wakeAt == nil,
+                guard before.pendingSleepInterval == pending, pending.wakeAt == nil,
                     before.activeTimer == nil, observedAt >= pending.sleepAt,
                     let task = before.tasks.first(where: { $0.id == pending.taskID }),
                     !before.tasks.contains(where: { $0.parentTaskID == task.id }),
