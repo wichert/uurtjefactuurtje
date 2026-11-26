@@ -16,7 +16,10 @@ struct WorkspaceView<ReportsContent: View>: View {
             Picker("Destination", selection: $presentation.destination) {
                 Text("Track").tag(WorkspaceDestination.track)
                 Text("Reports").tag(WorkspaceDestination.reports)
-            }.pickerStyle(.segmented).padding()
+            }
+            .pickerStyle(.segmented)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding()
             WorkspaceFeedback(host: host)
             if host.available, presentation.workspace.snapshot != nil {
                 switch presentation.destination {

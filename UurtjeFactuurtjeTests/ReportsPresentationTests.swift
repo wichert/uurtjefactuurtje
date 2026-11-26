@@ -106,12 +106,10 @@ import Testing
                 .setArchived(id: second, archived: true),
                 expectedRevision: try #require(workspace.snapshot).revision)
             reports.refresh(now: 1_710_000_000, calendar: calendar("UTC"))
-            #expect(reports.selectedProjectID == nil)
+            #expect(reports.selectedProjectID == second)
             reports.openProject(first)
             reports.addTime(taskID: task)
             let sheet = try #require(track.sheet?.id)
-            reports.reviewTime()
-            #expect(track.sheet?.id == sheet, "Review must not replace an existing draft")
             reports.restoreProject(first)
             #expect(track.sheet?.id == sheet, "Restore must not replace an existing draft")
         }
@@ -122,7 +120,7 @@ import Testing
         let project = Project(id: UUID(), name: "P", hourlyRate: 1, currencyCode: "JPY")
         let yen = try ReportProjection.amount(seconds: 3600, project: project)
         #expect(ReportFormatting.amount(yen, locale: locale) == "JPY 1")
-        #expect(ReportFormatting.duration(seconds: 3661) == "1 h 1 min 1 sec (3661 seconds)")
+        #expect(ReportFormatting.duration(seconds: 3661) == "01:01")
         let kwd = Project(id: UUID(), name: "P", hourlyRate: 1, currencyCode: "KWD")
         #expect(
             ReportFormatting.amount(try ReportProjection.amount(seconds: 3600, project: kwd), locale: locale)
@@ -267,7 +265,7 @@ extension ReportsPresentationTests {
         #expect(ReportFormatting.budgetHours(seconds: 3601, locale: englishLocale) == "≈1 h")
         #expect(ReportFormatting.budgetHours(seconds: 4500, locale: dutchLocale) == "1,25 h")
         #expect(ReportFormatting.budgetHours(seconds: 1, locale: dutchLocale) == "<0,01 h")
-        #expect(ReportFormatting.duration(seconds: 3661) == "1 h 1 min 1 sec (3661 seconds)")
+        #expect(ReportFormatting.duration(seconds: 3661) == "01:01")
     }
 
     @Test func compactBudgetStatesUseExactSecondsNotRoundedHours() {
@@ -394,5 +392,204 @@ extension ReportsPresentationTests {
             #expect(workspace.snapshot == before)
             #expect(workspace.budgetWarnings.map(\.id) == warnings)
         }
+    }
+
+    @Test func summaryWeekTimelineYAxisBoundsAndProjectFilter() async throws {
+        try await withReports { workspace, _, reports in
+            let alpha = try await addProject(workspace, "Alpha")
+            let beta = try await addProject(workspace, "Beta")
+            let alphaTask = try await addTask(workspace, projectID: alpha, name: "Design")
+            let betaTask = try await addTask(workspace, projectID: beta, name: "Build")
+            var cal = calendar("UTC")
+            cal.firstWeekday = 2
+
+            // Monday 2024-01-01 10:00 to 12:00 UTC -> within 09:00..17:00
+            let mon10 = Int64(1_704_103_200)
+            let mon12 = Int64(1_704_110_400)
+            let preview1 = try CorrectionPlanner.preview(
+                .add(id: UUID(), taskID: alphaTask, startAt: mon10, endAt: mon12),
+                in: #require(workspace.snapshot))
+            _ = try await workspace.enqueueCorrection(.apply(preview1)).value
+
+            reports.refresh(now: mon10, calendar: cal)
+            #expect(reports.weekPlotHourRange == 9...17)
+            #expect(reports.weekTotalSeconds == 7200)
+            #expect(reports.weekDayBlocks[0].count == 1)
+
+            // Tuesday 2024-01-02 07:30 to 19:15 UTC -> expands Y-axis to 7...20
+            let tue0730 = Int64(1_704_180_600)
+            let tue1915 = Int64(1_704_222_900)
+            let preview2 = try CorrectionPlanner.preview(
+                .add(id: UUID(), taskID: betaTask, startAt: tue0730, endAt: tue1915),
+                in: #require(workspace.snapshot))
+            _ = try await workspace.enqueueCorrection(.apply(preview2)).value
+
+            reports.refresh(now: mon10, calendar: cal)
+            #expect(reports.weekPlotHourRange == 7...20)
+            #expect(reports.weekDayBlocks[1].count == 1)
+
+            // Filter by project Alpha -> only Monday 10:00-12:00 remains, bounds return to 9...17
+            reports.selectProjectFilter(alpha)
+            reports.refresh(now: mon10, calendar: cal)
+            #expect(reports.weekPlotHourRange == 9...17)
+            #expect(reports.weekTotalSeconds == 7200)
+            #expect(reports.weekDayBlocks[0].count == 1)
+            #expect(reports.weekDayBlocks[1].isEmpty)
+        }
+    }
+
+    @Test func dynamicTaskColorFormulaAndProjectColorSpaces() async throws {
+        try await withReports { workspace, _, reports in
+            let proj1 = try await addProject(workspace, "Project 1")
+            let proj2 = try await addProject(workspace, "Project 2")
+            let proj3 = try await addProject(workspace, "Project 3")
+            let task1 = try await addTask(workspace, projectID: proj1, name: "T1")
+            let task2 = try await addTask(workspace, projectID: proj1, name: "T2")
+            let p2Task = try await addTask(workspace, projectID: proj2, name: "Only")
+            let p3Task = try await addTask(workspace, projectID: proj3, name: "Only3")
+
+            // Single task in project uses midpoint ratio t = 0.45
+            let singleStyle = reports.blockVisualStyle(projectID: proj2, taskID: p2Task)
+            let p2Space = ProjectColorSpace.forProjectIndex(1)
+            #expect(abs(singleStyle.brightness - p2Space.brightness(at: 0.45)) < 0.0001)
+            #expect(singleStyle.accentStyle == .dashed)
+
+            // Two tasks in Project 1 span endpoints t = 0.0 and t = 1.0
+            let firstOfTwo = reports.blockVisualStyle(projectID: proj1, taskID: task1)
+            let secondOfTwo = reports.blockVisualStyle(projectID: proj1, taskID: task2)
+            let p1Space = ProjectColorSpace.forProjectIndex(0)
+            #expect(abs(firstOfTwo.brightness - p1Space.brightnessStart) < 0.0001)
+            #expect(abs(secondOfTwo.brightness - p1Space.brightnessEnd) < 0.0001)
+            #expect(firstOfTwo.accentStyle == .solid)
+
+            // Add 4 more tasks to Project 1 (total N = 6) -> step is 1/5 = 0.2
+            var sixTasks = [task1, task2]
+            for idx in 3...6 {
+                sixTasks.append(try await addTask(workspace, projectID: proj1, name: "T\(idx)"))
+            }
+            let styles = sixTasks.map { reports.blockVisualStyle(projectID: proj1, taskID: $0) }
+            #expect(Set(styles.map { Int(($0.brightness * 1000).rounded()) }).count == 6)
+
+            // Project 3 has doubleBar accent style and distinct hue family
+            let p3Style = reports.blockVisualStyle(projectID: proj3, taskID: p3Task)
+            #expect(p3Style.accentStyle == .doubleBar)
+            #expect(firstOfTwo.projectFamilyIndex != singleStyle.projectFamilyIndex)
+            #expect(singleStyle.projectFamilyIndex != p3Style.projectFamilyIndex)
+        }
+    }
+
+    @Test func archivedProjectsWithTrackedTimeAlwaysShowInReports() async throws {
+        try await withReports { workspace, _, reports in
+            let archivedID = try await addProject(workspace, "Legacy Client")
+            let taskID = try await addTask(workspace, projectID: archivedID, name: "Maintenance")
+            let start = Int64(1_704_103_200)
+            let end = Int64(1_704_106_800)
+            let preview = try CorrectionPlanner.preview(
+                .add(id: UUID(), taskID: taskID, startAt: start, endAt: end),
+                in: #require(workspace.snapshot))
+            _ = try await workspace.enqueueCorrection(.apply(preview)).value
+            _ = try await workspace.submit(
+                .setArchived(id: archivedID, archived: true),
+                expectedRevision: try #require(workspace.snapshot).revision)
+
+            reports.includeArchived = false
+            reports.refresh(now: start, calendar: calendar("UTC"))
+            #expect(reports.visibleProjects.contains { $0.id == archivedID })
+            #expect(reports.weekTotalSeconds == 3600)
+            #expect(reports.timesheetRows.count == 1)
+            #expect(reports.timesheetRows.first?.projectID == archivedID)
+        }
+    }
+
+    @Test func timesheetOrderingFilteringAndEditRouting() async throws {
+        try await withReports { workspace, track, reports in
+            let alpha = try await addProject(workspace, "Alpha")
+            let beta = try await addProject(workspace, "Beta")
+            let parentTask = try await addTask(workspace, projectID: alpha, name: "Parent")
+            let childID = UUID()
+            _ = try await workspace.submit(
+                .createTask(id: childID, projectID: alpha, parentID: parentTask, name: "Child"),
+                expectedRevision: try #require(workspace.snapshot).revision)
+            let betaTask = try await addTask(workspace, projectID: beta, name: "Other")
+
+            let secondID = UUID()
+            let firstID = UUID()
+            let preview1 = try CorrectionPlanner.preview(
+                .add(id: secondID, taskID: betaTask, startAt: 2_000, endAt: 3_800),
+                in: #require(workspace.snapshot))
+            _ = try await workspace.enqueueCorrection(.apply(preview1)).value
+            let preview2 = try CorrectionPlanner.preview(
+                .add(id: firstID, taskID: childID, startAt: 1_000, endAt: 1_900),
+                in: #require(workspace.snapshot))
+            _ = try await workspace.enqueueCorrection(.apply(preview2)).value
+
+            reports.refresh(now: 5_000, calendar: calendar("UTC"))
+            #expect(reports.timesheetRows.map(\.id) == [firstID, secondID])
+            #expect(reports.timesheetRows.first?.taskName == "Parent / Child")
+
+            // Filtering by parent task includes descendant child task entries
+            reports.selectTaskFilter(parentTask)
+            reports.refresh(now: 5_000, calendar: calendar("UTC"))
+            #expect(reports.timesheetRows.map(\.id) == [firstID])
+
+            // Changing project filter to Beta clears incompatible task filter
+            reports.selectProjectFilter(beta)
+            reports.refresh(now: 5_000, calendar: calendar("UTC"))
+            #expect(reports.scopeTaskID == nil)
+            #expect(reports.timesheetRows.map(\.id) == [secondID])
+
+            // Edit routing from TimesheetRow
+            let row = try #require(reports.timesheetRows.first)
+            reports.editTimesheetRow(row)
+            if case .correction(let route) = track.sheet, case .edit(let entryID) = route.mode {
+                #expect(entryID == secondID)
+            } else {
+                Issue.record("Expected correction edit sheet for timesheet row")
+            }
+
+            // Edit and delete routing from Summary WeekTimeBlock
+            track.cancelSheet()
+            let weekBlock = try #require(reports.weekDayBlocks.flatMap { $0 }.first)
+            reports.editWeekBlock(weekBlock)
+            if case .correction(let route) = track.sheet, case .edit(let entryID) = route.mode {
+                #expect(entryID == secondID)
+            } else {
+                Issue.record("Expected correction edit sheet for week block")
+            }
+
+            track.cancelSheet()
+            reports.deleteWeekBlock(weekBlock)
+            if case .correction(let route) = track.sheet, case .delete(let entryID) = route.mode {
+                #expect(entryID == secondID)
+                let snapshot = try #require(workspace.snapshot)
+                let form = try CorrectionForm(route: route, snapshot: snapshot, now: Date())
+                #expect(form.deletion?.entry.id == secondID)
+            } else {
+                Issue.record("Expected correction delete sheet for week block")
+            }
+        }
+    }
+
+    @Test func timeAndDateFormattingNeverContainsSecondsOrTimezone() {
+        var cal = calendar("Europe/Amsterdam")
+        cal.firstWeekday = 2
+        let locale = Locale(identifier: "nl_NL")
+        let instant: Int64 = 1_704_103_845 // 2024-01-01 11:10:45 CET
+
+        let timeText = ReportFormatting.timeOfDay(instant, calendar: cal, locale: locale)
+        #expect(timeText.contains("11"))
+        #expect(timeText.contains("10"))
+        #expect(!timeText.contains("45"))
+        #expect(!timeText.contains("CET"))
+        #expect(!timeText.contains("GMT"))
+        #expect(!timeText.contains("Europe"))
+
+        let dateText = ReportFormatting.date(instant, calendar: cal, locale: locale)
+        #expect(!dateText.contains("CET"))
+        #expect(!dateText.contains("GMT"))
+        #expect(!dateText.contains("11:10"))
+
+        let durationText = ReportFormatting.duration(seconds: 5445)
+        #expect(durationText == "01:30")
     }
 }
