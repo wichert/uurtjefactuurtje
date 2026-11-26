@@ -137,6 +137,98 @@ struct AdjustmentDisclosure: View {
         }
     }
 }
+struct SimpleTimeField: View {
+    let title: String
+    @Binding var value: LocalCorrectionTime
+    let calendar: Calendar
+
+    private var selection: Binding<Date> {
+        Binding(
+            get: { CorrectionForm.pickerDate(for: value) },
+            set: { date in
+                let changed = CorrectionForm.applyingPickerDate(date, to: value)
+                if changed != value { value = changed }
+            })
+    }
+
+    private var occurrence: Binding<Int64?> {
+        Binding(
+            get: { value.selectedInstant },
+            set: { instant in
+                let changed = CorrectionForm.choosingOccurrence(instant, for: value, calendar: calendar)
+                if changed != value { value = changed }
+            })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            DatePicker(
+                title,
+                selection: selection,
+                displayedComponents: [.hourAndMinute]
+            )
+            .datePickerStyle(.field)
+            .environment(\.calendar, CorrectionForm.pickerCalendar)
+            .environment(\.timeZone, CorrectionForm.pickerCalendar.timeZone)
+
+            switch CorrectionClock.resolve(value.components, calendar: calendar) {
+            case .nonexistent:
+                Text("This local time does not exist in the current time zone. Choose another time.")
+                    .foregroundStyle(.red)
+                    .font(.caption)
+            case .unique:
+                EmptyView()
+            case .ambiguous(let earlier, let later, let firstOffset, let secondOffset):
+                Picker("Repeated local time — choose an occurrence", selection: occurrence) {
+                    Text("Choose occurrence").tag(Int64?.none)
+                    Text("Earlier occurrence — \(EntryDisclosure.offset(firstOffset))").tag(Optional(earlier))
+                    Text("Later occurrence — \(EntryDisclosure.offset(secondOffset))").tag(Optional(later))
+                }
+            }
+        }
+    }
+}
+
+struct SimpleDeletionSummary: View {
+    let deletion: DeletionPreview
+    let calendar: Calendar
+    @Environment(\.locale) private var locale
+
+    private var taskTitle: String {
+        let name = deletion.path.taskNames.joined(separator: " / ")
+        return name.isEmpty ? "—" : name
+    }
+
+    var body: some View {
+        let entry = deletion.entry
+        let endAt = entry.endAt ?? entry.startAt
+        let startTime = ReportFormatting.timeOfDay(entry.startAt, calendar: calendar, locale: locale)
+        let endTime = ReportFormatting.timeOfDay(endAt, calendar: calendar, locale: locale)
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+            GridRow {
+                Text("Project:").foregroundStyle(.secondary)
+                Text(deletion.path.projectName)
+            }
+            GridRow {
+                Text("Task:").foregroundStyle(.secondary)
+                Text(taskTitle)
+            }
+            GridRow {
+                Text("Date:").foregroundStyle(.secondary)
+                Text(ReportFormatting.date(entry.startAt, calendar: calendar, locale: locale))
+            }
+            GridRow {
+                Text("Time:").foregroundStyle(.secondary)
+                Text("\(startTime) to \(endTime)")
+            }
+            GridRow {
+                Text("Duration:").foregroundStyle(.secondary)
+                Text(ReportFormatting.totalTime(seconds: max(0, endAt - entry.startAt)))
+            }
+        }
+    }
+}
+
 struct CorrectionSheet: View {
     let presentation: TrackPresentation
     let route: CorrectionRoute
@@ -145,27 +237,32 @@ struct CorrectionSheet: View {
     @State private var error: String?
     private var model: WorkspaceModel { presentation.workspace }
     var body: some View {
-        ScrollView {
+        Group {
             if let form {
                 contents(form)
             } else {
                 Text(error ?? "Loading entry…").textSelection(.enabled)
             }
-        }.padding().frame(minWidth: 580, idealHeight: 650)
-            .task(id: token) {
-                guard form == nil, let snapshot = model.snapshot else { return }
-                do { form = try CorrectionForm(route: route, snapshot: snapshot, now: Date()) } catch {
-                    self.error = String(describing: error)
-                }
+        }
+        .padding(16)
+        .fixedSize()
+        .task(id: token) {
+            guard form == nil, let snapshot = model.snapshot else { return }
+            do { form = try CorrectionForm(route: route, snapshot: snapshot, now: Date()) } catch {
+                self.error = String(describing: error)
             }
-            .onChange(of: model.snapshot?.revision) { _, _ in form?.invalidateConfirmation() }
+        }
+        .onChange(of: model.snapshot?.revision) { _, _ in form?.invalidateConfirmation() }
     }
     @ViewBuilder private func contents(_ form: CorrectionForm) -> some View {
         @Bindable var form = form
-        let editing = form.preview == nil && form.deletion == nil
-        VStack(alignment: .leading, spacing: 12) {
-            Text(form.source == nil ? "Add time" : "Edit whole saved entry").font(.headline)
-            Text("Time zone captured when opened: \(form.timeZone.identifier)")
+        let editing = form.deletion == nil
+        let title: String = {
+            if form.deletion != nil { return "Delete work entry" }
+            return form.source == nil ? "Add time" : "Edit work entry"
+        }()
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title).font(.headline)
             if editing {
                 Picker("Task", selection: $form.taskID) {
                     Text("Select leaf").tag(UUID?.none)
@@ -175,56 +272,37 @@ struct CorrectionSheet: View {
                         }
                     }
                 }
-                WallTimeFields(title: "Start", value: $form.start, calendar: form.calendar)
-                WallTimeFields(title: "End", value: $form.end, calendar: form.calendar)
-                Text(
-                    "Unchanged saved boundaries retain exact stored precision. "
-                        + "Changing a boundary uses minute precision.")
-                Text(
-                    "Native input can normalize dates or retain the previous value for an incomplete edit. "
-                        + "Review the resulting values before confirming.")
-            } else {
-                Text(
-                    "Review the resulting dates, times, occurrence offsets and affected entries. "
-                        + "Confirm accepts these values, including any native date normalization. "
-                        + "Use Back to change them.")
+                SimpleTimeField(title: "Start time", value: $form.start, calendar: form.calendar)
+                SimpleTimeField(title: "End time", value: $form.end, calendar: form.calendar)
             }
-            if let preview = form.preview { AdjustmentDisclosure(preview: preview, zone: form.timeZone) }
             if let deletion = form.deletion {
-                EntryDisclosure(
-                    entry: deletion.entry,
-                    path: "Delete whole entry: " + deletion.path.text, zone: form.timeZone)
+                SimpleDeletionSummary(deletion: deletion, calendar: form.calendar)
             }
-            if form.confirmationIsStale {
-                Text(
-                    "Preview is stale. The old disclosure is retained; use Back and Review again before "
-                        + "confirming.")
+            if let error {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
             actions(form, editing: editing)
-        }.disabled(presentation.acceptedWork)
+        }
+        .frame(minWidth: 260, alignment: .leading)
+        .disabled(presentation.acceptedWork)
     }
 
     @ViewBuilder private func actions(_ form: CorrectionForm, editing: Bool) -> some View {
         HStack {
             Button("Cancel") { presentation.cancelSheet() }.keyboardShortcut(.cancelAction)
+            Spacer()
             if editing {
-                Button("Review") { review(form, deletion: false) }
-                if form.source != nil {
-                    Button("Review deletion", role: .destructive) { review(form, deletion: true) }
-                }
+                Button("Save") { save(form) }
+                    .keyboardShortcut(.defaultAction)
             } else {
-                Button("Back") { form.back() }
-                if form.preview?.runningConflict != nil, let stop = presentation.ownedStop {
-                    Button("Stop, then review again") {
-                        presentation.timer(stop) { form.invalidateConfirmation() }
-                    }
-                }
-                Button(
-                    form.deletion == nil ? "Confirm changes" : "Confirm deletion",
-                    role: form.deletion == nil ? nil : .destructive
-                ) { confirm(form) }
-                .disabled(form.confirmationIsStale || form.preview?.runningConflict != nil)
+                Button("Delete") { confirm(form) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(form.confirmationIsStale)
             }
         }
     }
@@ -238,22 +316,30 @@ struct CorrectionSheet: View {
         }
         return presentation.eligible(task.id)
     }
-    private func review(_ form: CorrectionForm, deletion: Bool) {
-        guard NSApp.keyWindow?.makeFirstResponder(nil) == true else {
-            error = "Finish editing the date and time before reviewing."
+
+    private func save(_ form: CorrectionForm) {
+        if let window = NSApp.keyWindow, !window.makeFirstResponder(nil) {
+            error = "Finish editing the time before saving."
             return
         }
         DispatchQueue.main.async {
             guard !presentation.acceptedWork, let snapshot = model.snapshot else { return }
             do {
-                if deletion { try form.reviewDeletion(in: snapshot) } else { try form.review(in: snapshot) }
+                try form.review(in: snapshot)
+                if form.preview?.runningConflict != nil {
+                    form.back()
+                    error = "This time range overlaps with the running timer. Stop the timer first."
+                    return
+                }
                 error = nil
+                confirm(form)
             } catch {
                 self.error = String(describing: error)
-                form.invalidateConfirmation()
+                form.back()
             }
         }
     }
+
     private func confirm(_ form: CorrectionForm) {
         guard !form.confirmationIsStale else { return }
         let command: CorrectionCommand

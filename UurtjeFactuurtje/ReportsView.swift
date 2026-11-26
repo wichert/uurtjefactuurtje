@@ -8,7 +8,6 @@ private struct ReportRefreshKey: Equatable {
     let firstWeekday: Int?
     let mode: ReportMode
     let anchor: Int64?
-    let includeArchived: Bool
     let projectID: UUID?
     let scopeTaskID: UUID?
     let period: ReportPeriod
@@ -31,21 +30,20 @@ private struct ReportRefreshKey: Equatable {
                 snapshot: workspace.snapshot, availability: workspace.availability,
                 timerStatus: workspace.timerStatus, firstWeekday: workspace.firstWeekday,
                 mode: reports.mode, anchor: reports.weekAnchor,
-                includeArchived: reports.includeArchived, projectID: reports.selectedProjectID,
+                projectID: reports.selectedProjectID,
                 scopeTaskID: reports.scopeTaskID, period: reports.period,
                 calendar: calendar, second: now)
-            VStack(alignment: .leading) {
-                Picker("Report", selection: Binding(get: { reports.mode }, set: { reports.mode = $0 })) {
-                    Text("Week").tag(ReportMode.week)
-                    Text("Project").tag(ReportMode.project)
-                }.pickerStyle(.segmented)
-                Toggle(
-                    "Include archived projects",
-                    isOn: Binding(
-                        get: { reports.includeArchived },
-                        set: { reports.includeArchived = $0 },
-                    )
-                )
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Picker("View", selection: Binding(get: { reports.mode }, set: { reports.mode = $0 })) {
+                        Text("Summary").tag(ReportMode.week)
+                        Text("Timesheets").tag(ReportMode.project)
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 260)
+                    Spacer()
+                }
                 if let error = reports.error {
                     Text(error).foregroundStyle(.red).accessibilityLabel("Report error: \(error)")
                 }
@@ -54,9 +52,6 @@ private struct ReportRefreshKey: Equatable {
                 } else {
                     ProjectReportView(reports: reports, locale: locale)
                 }
-                Button("Review time…") { reports.reviewTime() }
-                Text("Pending sleep is excluded until included in a committed review.")
-                    .font(.caption)
             }
             .padding()
             .task(id: key) {

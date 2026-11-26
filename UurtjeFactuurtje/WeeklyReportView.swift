@@ -1,184 +1,391 @@
-import Charts
 import LibraryStore
 import SwiftUI
-
-private struct WeekSegment: Identifiable {
-    let day: Int
-    let project: Project
-    let seconds: Int64
-    let lowerHours: Double
-    let upperHours: Double
-    var id: String { "\(day):\(project.id.uuidString)" }
-    var series: String { "\(project.name) (\(project.id.uuidString))" }
-}
 
 @MainActor struct WeeklyReportView: View {
     let reports: ReportsPresentation
     let now: Int64
     let locale: Locale
-    @State private var hoveredSegment: WeekSegment?
+    @State private var hoveredBlock: WeekTimeBlock?
     @State private var navigationError: String?
 
     var body: some View {
-        VStack(alignment: .leading) {
-            HStack {
-                Button("Previous week") { move(-1) }
-                Button("This week") { reports.showThisWeek() }
-                Button("Next week") { move(1) }
-                Picker(
-                    "Open project",
-                    selection: Binding<UUID?>(
-                        get: { nil },
-                        set: { id in
-                            if let id { reports.openProject(id) }
-                        })
-                ) {
-                    Text("Choose project").tag(UUID?.none)
-                    ForEach(reports.visibleProjects) { project in
-                        Text(project.name + (project.isArchived ? " (archived)" : "")).tag(Optional(project.id))
-                    }
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            filterAndLegendHeader
+            if let navigationError {
+                Text(navigationError).foregroundStyle(.red)
             }
-            if let navigationError { Text(navigationError).foregroundStyle(.red) }
             if let week = reports.week {
-                Text("Time zone: \(week.timeZoneIdentifier)")
-                Text("Total: \(ReportFormatting.duration(seconds: week.total.totalSeconds))")
-                ForEach(Array(reports.weeklyAmounts.enumerated()), id: \.offset) { _, amount in
-                    Text("Current-rate total: \(ReportFormatting.amount(amount, locale: locale))")
-                }
-                if week.hasOpenEntry {
-                    Text(reports.openLabel(entryID: reports.track.workspace.snapshot?.activeTimer?.entryID))
-                }
-                let segments = week.days.enumerated().flatMap { index, day -> [WeekSegment] in
-                    var height = 0.0
-                    return week.projects.map { project in
-                        let seconds = day.projects[project.id]?.totalSeconds ?? 0
-                        let lower = height
-                        height += Double(seconds) / 3600
-                        return WeekSegment(
-                            day: index, project: project, seconds: seconds,
-                            lowerHours: lower, upperHours: height,
-                        )
-                    }
-                }
-                Chart(segments) { segment in
-                    BarMark(
-                        x: .value("Day", Double(segment.day)),
-                        yStart: .value("From hours", segment.lowerHours),
-                        yEnd: .value("To hours", segment.upperHours)
-                    )
-                    .foregroundStyle(by: .value("Project", segment.series))
-                    .accessibilityLabel(
-                        "\(segment.series), "
-                            + ReportFormatting.day(
-                                week.days[segment.day].date, calendar: reports.calendar,
-                            )
-                    )
-                    .accessibilityValue(ReportFormatting.duration(seconds: segment.seconds))
-                }
-                .chartXScale(domain: -0.5...6.5)
-                .chartOverlay { proxy in
-                    GeometryReader { geometry in
-                        if let plot = proxy.plotFrame {
-                            let frame = geometry[plot]
-                            Rectangle().fill(.clear).contentShape(Rectangle())
-                                .onContinuousHover { phase in
-                                    switch phase {
-                                    case .active(let point): hoveredSegment = hitActive(point, frame, proxy, segments)
-                                    case .ended: hoveredSegment = nil
-                                    }
-                                }
-                                .gesture(
-                                    SpatialTapGesture().onEnded { event in
-                                        if let segment = hit(
-                                            event.location, frame: frame, proxy: proxy, segments: segments
-                                        ),
-                                            week.days.indices.contains(segment.day) {
-                                            reports.openDay(projectID: segment.project.id, day: week.days[segment.day])
-                                        }
-                                    })
-                        }
-                    }
-                }
-                .frame(minHeight: 180)
-                if let segment = hoveredSegment, week.days.indices.contains(segment.day) {
-                    Text(segmentTooltip(segment, week: week))
-                }
-                Text("Exact project/day values; select any ordinary cell to open that day.")
-                ScrollView(.horizontal) {
-                    Grid(alignment: .leading) {
-                        GridRow {
-                            Text("Project")
-                            ForEach(Array(week.days.enumerated()), id: \.offset) { _, day in
-                                Text(ReportFormatting.day(day.date, calendar: reports.calendar))
-                            }
-                        }
-                        ForEach(week.projects) { project in
-                            GridRow {
-                                Text(project.name + (project.isArchived ? " (archived)" : ""))
-                                ForEach(Array(week.days.enumerated()), id: \.offset) { _, day in
-                                    cell(project: project, day: day)
-                                }
-                            }
-                        }
-                    }
-                }
-                Text(
-                    """
-                    Amounts use current project rates, grouped by currency; no conversion. \
-                    Chart hours are geometry only.
-                    """
+                weekNavigationBar(week: week)
+                weekCalendarTimeline(week: week)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var filterAndLegendHeader: some View {
+        HStack(spacing: 16) {
+            Picker(
+                "Project",
+                selection: Binding<UUID?>(
+                    get: { reports.selectedProjectID },
+                    set: { reports.selectProjectFilter($0) }
                 )
-                .font(.caption)
+            ) {
+                Text("All Projects").tag(UUID?.none)
+                ForEach(reports.visibleProjects) { project in
+                    Text(project.name).tag(Optional(project.id))
+                }
+            }
+            .frame(maxWidth: 260)
+
+            if !reports.weekProjectLegend.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(reports.weekProjectLegend) { item in
+                            HStack(spacing: 5) {
+                                Text(item.markerSymbol)
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(item.swatchColor)
+                                Text(item.name)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.primary)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule()
+                                    .fill(item.swatchColor.opacity(0.15))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(item.swatchColor.opacity(0.6), lineWidth: 1)
+                            )
+                        }
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func weekNavigationBar(week: WeeklyReport) -> some View {
+        HStack(spacing: 12) {
+            Button("Previous") { move(-1) }
+            Button("This Week") { reports.showThisWeek() }
+            Button("Next") { move(1) }
+            Spacer()
+            if let first = week.days.first?.date, let last = week.days.last?.date {
+                let startLabel = ReportFormatting.day(first, calendar: reports.calendar, locale: locale)
+                let endLabel = ReportFormatting.day(last, calendar: reports.calendar, locale: locale)
+                Text("\(startLabel) – \(endLabel)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            Text("Total: \(ReportFormatting.totalTime(seconds: reports.weekTotalSeconds))")
+                .font(.headline.monospacedDigit())
+        }
+    }
+
+    private func weekCalendarTimeline(week: WeeklyReport) -> some View {
+        let hourRange = reports.weekPlotHourRange
+        let startHour = hourRange.lowerBound
+        let endHour = hourRange.upperBound
+        let totalMinutes = Double(max(60, (endHour - startHour) * 60))
+        let axisWidth: CGFloat = 56
+        let headerHeight: CGFloat = 46
+
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Color.clear
+                    .frame(width: axisWidth, height: headerHeight)
+                ForEach(Array(week.days.enumerated()), id: \.offset) { dayIndex, day in
+                    dayColumnHeader(day: day, dayIndex: dayIndex)
+                        .frame(maxWidth: .infinity, minHeight: headerHeight)
+                }
+            }
+            .background(Color(nsColor: .controlBackgroundColor))
+            .overlay(alignment: .bottom) {
+                Divider()
+            }
+
+            GeometryReader { geometry in
+                let plotHeight = max(80, geometry.size.height - 16)
+                let topInset: CGFloat = 8
+                ZStack(alignment: .topLeading) {
+                    hourGridLines(
+                        startHour: startHour,
+                        endHour: endHour,
+                        axisWidth: axisWidth,
+                        plotHeight: plotHeight,
+                        topInset: topInset
+                    )
+
+                    HStack(spacing: 0) {
+                        Color.clear
+                            .frame(width: axisWidth, height: plotHeight)
+                        ForEach(0..<week.days.count, id: \.self) { dayIndex in
+                            dayTimelineColumn(
+                                dayIndex: dayIndex,
+                                startHour: startHour,
+                                totalMinutes: totalMinutes,
+                                plotHeight: plotHeight
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    }
+                    .padding(.top, topInset)
+                }
+            }
+            .frame(minHeight: 160, maxHeight: .infinity)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .textBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    private func dayColumnHeader(day: WeeklyReportDay, dayIndex: Int) -> some View {
+        let daySeconds = reports.weekDayTotals.indices.contains(dayIndex)
+            ? reports.weekDayTotals[dayIndex]
+            : 0
+        return VStack(spacing: 2) {
+            Text(ReportFormatting.weekdayHeader(day.date, calendar: reports.calendar, locale: locale))
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+            Text(ReportFormatting.totalTime(seconds: daySeconds))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(daySeconds > 0 ? .primary : .secondary)
+        }
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .leading) {
+            Divider()
+        }
+    }
+
+    private func hourGridLines(
+        startHour: Int,
+        endHour: Int,
+        axisWidth: CGFloat,
+        plotHeight: CGFloat,
+        topInset: CGFloat
+    ) -> some View {
+        let hoursCount = max(1, endHour - startHour)
+        return ZStack(alignment: .topLeading) {
+            ForEach(startHour...endHour, id: \.self) { hour in
+                let fraction = CGFloat(hour - startHour) / CGFloat(hoursCount)
+                let yOffset = topInset + fraction * plotHeight
+                HStack(spacing: 6) {
+                    Text(ReportFormatting.hourMark(hour * 60, calendar: reports.calendar, locale: locale))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: axisWidth - 8, alignment: .trailing)
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.18))
+                        .frame(height: 1)
+                }
+                .offset(y: yOffset - 6)
             }
         }
     }
 
-    private func segmentTooltip(_ segment: WeekSegment, week: WeeklyReport) -> String {
-        let day = ReportFormatting.day(
-            week.days[segment.day].date, calendar: reports.calendar
-        )
-        return "\(segment.project.name) — \(day): "
-            + ReportFormatting.duration(seconds: segment.seconds)
-    }
+    private func dayTimelineColumn(
+        dayIndex: Int,
+        startHour: Int,
+        totalMinutes: Double,
+        plotHeight: CGFloat
+    ) -> some View {
+        let blocks = reports.weekDayBlocks.indices.contains(dayIndex)
+            ? reports.weekDayBlocks[dayIndex]
+            : []
+        let plotStartMinute = Double(startHour * 60)
 
-    private func hitActive(
-        _ point: CGPoint,
-        _ frame: CGRect,
-        _ proxy: ChartProxy,
-        _ segments: [WeekSegment],
-    ) -> WeekSegment? {
-        hit(point, frame: frame, proxy: proxy, segments: segments)
-    }
+        return GeometryReader { columnGeo in
+            let width = max(16, columnGeo.size.width - 6)
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.15))
+                    .frame(width: 1, height: plotHeight)
 
-    @ViewBuilder private func cell(project: Project, day: WeeklyReportDay) -> some View {
-        let duration = ReportFormatting.duration(seconds: day.projects[project.id]?.totalSeconds ?? 0)
-        let date = ReportFormatting.day(day.date, calendar: reports.calendar)
-        if day.bounds != nil {
-            Button(duration) { reports.openDay(projectID: project.id, day: day) }
-                .accessibilityLabel("\(project.name), \(date), \(duration)")
-                .help("\(project.name) — \(date): \(duration)")
-        } else {
-            Text("Skipped day — 0 seconds").accessibilityLabel("\(date), skipped day, zero seconds")
+                ForEach(blocks) { block in
+                    let clampedStart = max(plotStartMinute, block.startMinuteOfDay)
+                    let clampedEnd = min(plotStartMinute + totalMinutes, max(clampedStart, block.endMinuteOfDay))
+                    let topRatio = (clampedStart - plotStartMinute) / totalMinutes
+                    let heightRatio = (clampedEnd - clampedStart) / totalMinutes
+                    let topY = CGFloat(topRatio) * plotHeight
+                    let rawHeight = CGFloat(heightRatio) * plotHeight
+                    let blockHeight = max(6, rawHeight)
+
+                    WeekBlockCardView(
+                        block: block,
+                        calendar: reports.calendar,
+                        locale: locale,
+                        height: blockHeight,
+                        isHovered: hoveredBlock?.id == block.id,
+                        isBusy: reports.track.workspace.isBusy,
+                        onEdit: {
+                            hoveredBlock = nil
+                            reports.editWeekBlock(block)
+                        },
+                        onDelete: {
+                            hoveredBlock = nil
+                            reports.deleteWeekBlock(block)
+                        }
+                    )
+                    .frame(width: width, height: blockHeight, alignment: .topLeading)
+                    .offset(x: 3, y: min(plotHeight - blockHeight, max(0, topY)))
+                    .onHover { hovering in
+                        if hovering {
+                            hoveredBlock = block
+                        } else if hoveredBlock?.id == block.id {
+                            hoveredBlock = nil
+                        }
+                    }
+                }
+            }
         }
-    }
-
-    private func hit(_ point: CGPoint, frame: CGRect, proxy: ChartProxy, segments: [WeekSegment]) -> WeekSegment? {
-        guard frame.contains(point),
-            let horizontal: Double = proxy.value(atX: point.x - frame.minX),
-            let vertical: Double = proxy.value(atY: point.y - frame.minY)
-        else { return nil }
-        let day = Int(horizontal.rounded())
-        guard abs(horizontal - Double(day)) <= 0.5 else { return nil }
-        return segments.first {
-            $0.day == day && $0.lowerHours <= vertical && vertical < $0.upperHours
-        }
+        .frame(height: plotHeight)
     }
 
     private func move(_ offset: Int) {
         do {
             try reports.moveWeek(offset, now: now, calendar: reports.calendar)
             navigationError = nil
-        } catch { navigationError = "Cannot change week: \(error)" }
+        } catch {
+            navigationError = "Cannot change week: \(error)"
+        }
+    }
+}
+
+private struct WeekBlockCardView: View {
+    let block: WeekTimeBlock
+    let calendar: Calendar
+    let locale: Locale
+    let height: CGFloat
+    let isHovered: Bool
+    let isBusy: Bool
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    private var durationText: String {
+        ReportFormatting.totalTime(seconds: block.durationSeconds)
+    }
+
+    private var timeRangeText: String {
+        let start = ReportFormatting.timeOfDay(block.startAt, calendar: calendar, locale: locale)
+        let end = ReportFormatting.timeOfDay(block.endAt, calendar: calendar, locale: locale)
+        return "\(start) – \(end)"
+    }
+
+    private var tooltipSummary: String {
+        "\(block.projectName)\n\(block.taskName)\n\(timeRangeText)\nDuration: \(durationText)"
+    }
+
+    var body: some View {
+        let useDarkText = block.style.brightness > 0.72
+        let textColor: Color = useDarkText ? .black.opacity(0.88) : .white
+
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 5)
+                .fill(block.style.fillColor)
+            RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(block.style.accentColor.opacity(0.9), lineWidth: isHovered ? 1.5 : 1)
+
+            HStack(spacing: 4) {
+                ProjectAccentStrip(style: block.style.accentStyle, color: block.style.accentColor)
+                    .frame(width: 5)
+
+                if height >= 18 {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 3) {
+                            Text(block.style.markerSymbol)
+                                .font(.caption2.weight(.bold))
+                            Text(block.taskName)
+                                .font(.caption2.weight(.semibold))
+                                .lineLimit(1)
+                        }
+                        if height >= 34 {
+                            Text(durationText)
+                                .font(.caption2.monospacedDigit())
+                                .opacity(0.9)
+                                .lineLimit(1)
+                        }
+                    }
+                    .foregroundStyle(textColor)
+                    .padding(.vertical, 2)
+                    .padding(.trailing, 4)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .contentShape(RoundedRectangle(cornerRadius: 5))
+        .contextMenu {
+            Button("Edit…", action: onEdit)
+                .disabled(!block.isEditable || isBusy)
+            Button("Delete…", role: .destructive, action: onDelete)
+                .disabled(!block.isEditable || isBusy)
+        }
+        .help(tooltipSummary)
+        .popover(isPresented: Binding(get: { isHovered }, set: { _ in }), arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 5) {
+                    Text(block.style.markerSymbol)
+                        .foregroundStyle(block.style.accentColor)
+                    Text(block.projectName)
+                        .font(.subheadline.weight(.semibold))
+                }
+                Text(block.taskName)
+                    .font(.callout)
+                Text(timeRangeText)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Text("Duration: \(durationText)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(block.projectName), \(block.taskName)")
+        .accessibilityValue("\(timeRangeText), \(durationText)")
+    }
+}
+
+private struct ProjectAccentStrip: View {
+    let style: ProjectAccentStyle
+    let color: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            switch style {
+            case .solid:
+                Rectangle()
+                    .fill(color)
+            case .dashed:
+                Path { path in
+                    path.move(to: CGPoint(x: geo.size.width / 2, y: 0))
+                    path.addLine(to: CGPoint(x: geo.size.width / 2, y: geo.size.height))
+                }
+                .stroke(color, style: StrokeStyle(lineWidth: geo.size.width, dash: [4, 2]))
+            case .doubleBar:
+                HStack(spacing: 1) {
+                    Rectangle().fill(color).frame(width: 1.5)
+                    Rectangle().fill(color).frame(width: 1.5)
+                }
+            case .dotted:
+                Path { path in
+                    path.move(to: CGPoint(x: geo.size.width / 2, y: 0))
+                    path.addLine(to: CGPoint(x: geo.size.width / 2, y: geo.size.height))
+                }
+                .stroke(color, style: StrokeStyle(lineWidth: geo.size.width, dash: [2, 2]))
+            }
+        }
     }
 }

@@ -31,7 +31,7 @@ import Observation
             taskID = task
             start = Self.fields(now.addingTimeInterval(-3600), calendar: calendar)
             end = Self.fields(now, calendar: calendar)
-        case .edit(let id):
+        case .edit(let id), .delete(let id):
             guard let entry = snapshot.entries.first(where: { $0.id == id }),
                 let stop = entry.endAt
             else {
@@ -46,6 +46,9 @@ import Observation
             end = Self.fields(
                 Date(timeIntervalSince1970: TimeInterval(stop)),
                 calendar: calendar, preservingPrecision: true)
+            if case .delete = route.mode {
+                try reviewDeletion(in: snapshot)
+            }
         }
     }
 

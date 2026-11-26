@@ -161,6 +161,7 @@ struct CorrectionRoute: Identifiable {
     enum Mode {
         case add(taskID: UUID?)
         case edit(entryID: UUID)
+        case delete(entryID: UUID)
     }
     let id: UUID
     let mode: Mode

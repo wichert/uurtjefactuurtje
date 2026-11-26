@@ -309,6 +309,17 @@ extension TrackPresentation {
         }
         present(.correction(CorrectionRoute(id: UUID(), mode: .edit(entryID: entryID))))
     }
+    func deleteTime(entryID: UUID) {
+        guard let row = workspace.snapshot?.entries.first(where: { $0.id == entryID }) else {
+            failure = "Entry no longer exists."
+            return
+        }
+        guard row.endAt != nil else {
+            failure = "This entry is still open. Resolve the interrupted time before deleting it."
+            return
+        }
+        present(.correction(CorrectionRoute(id: UUID(), mode: .delete(entryID: entryID))))
+    }
     func reviewTime() { present(.timeReview(UUID())) }
     func updateTaskDraft(_ draft: TaskDraft) {
         guard case .task(let current) = sheet, current.id == draft.id, !acceptedWork else { return }

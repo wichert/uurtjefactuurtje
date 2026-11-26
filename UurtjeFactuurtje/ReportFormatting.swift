@@ -13,30 +13,107 @@ enum ReportFormatting {
     }
 
     static func duration(seconds: Int64) -> String {
-        let hours = seconds / 3600
-        let minutes = (seconds % 3600) / 60
-        let remaining = seconds % 60
-        return "\(hours) h \(minutes) min \(remaining) sec (\(seconds) seconds)"
+        totalTime(seconds: seconds)
     }
 
-    static func day(_ date: DateComponents, calendar: Calendar) -> String {
-        let year = date.year.map(String.init) ?? "?"
-        let month = date.month.map(String.init) ?? "?"
-        let day = date.day.map(String.init) ?? "?"
-        return "\(year)-\(month)-\(day)"
-    }
-
-    static func instant(_ timestamp: Int64, calendar: Calendar) -> String {
+    static func timeOfDay(
+        _ timestamp: Int64,
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .medium
+        formatter.locale = locale
+        formatter.setLocalizedDateFormatFromTemplate("HHmm")
         return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
     }
 
-    static func interval(_ start: Int64, _ end: Int64, calendar: Calendar) -> String {
-        "\(instant(start, calendar: calendar)) – \(instant(end, calendar: calendar))"
+    static func hourMark(
+        _ minutesFromMidnight: Int,
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
+        let clamped = max(0, min(24 * 60, minutesFromMidnight))
+        if clamped == 24 * 60 {
+            return "24:00"
+        }
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 1
+        components.day = 1
+        components.hour = clamped / 60
+        components.minute = clamped % 60
+        components.second = 0
+        guard let date = calendar.date(from: components) else {
+            let hours = String(format: "%02d", clamped / 60)
+            let minutes = String(format: "%02d", clamped % 60)
+            return "\(hours):\(minutes)"
+        }
+        return timeOfDay(Int64(date.timeIntervalSince1970), calendar: calendar, locale: locale)
+    }
+
+    static func date(
+        _ timestamp: Int64,
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = locale
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+    }
+
+    static func day(
+        _ components: DateComponents,
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
+        guard let resolved = calendar.date(from: components) else {
+            let year = components.year.map(String.init) ?? "?"
+            let month = components.month.map(String.init) ?? "?"
+            let day = components.day.map(String.init) ?? "?"
+            return "\(year)-\(month)-\(day)"
+        }
+        return date(Int64(resolved.timeIntervalSince1970), calendar: calendar, locale: locale)
+    }
+
+    static func weekdayHeader(
+        _ components: DateComponents,
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
+        guard let resolved = calendar.date(from: components) else {
+            return day(components, calendar: calendar, locale: locale)
+        }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = locale
+        formatter.setLocalizedDateFormatFromTemplate("EEEd")
+        return formatter.string(from: resolved)
+    }
+
+    static func instant(
+        _ timestamp: Int64,
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
+        let dayPart = date(timestamp, calendar: calendar, locale: locale)
+        let timePart = timeOfDay(timestamp, calendar: calendar, locale: locale)
+        return "\(dayPart) \(timePart)"
+    }
+
+    static func interval(
+        _ start: Int64,
+        _ end: Int64,
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
+        "\(instant(start, calendar: calendar, locale: locale)) – \(instant(end, calendar: calendar, locale: locale))"
     }
 }
 
