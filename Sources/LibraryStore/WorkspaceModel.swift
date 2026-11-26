@@ -96,7 +96,7 @@ struct WorkspaceOperations: Sendable {
         sample captured: (generation: UInt64, instant: Int64)? = nil
     ) throws -> Int64? {
         guard state == .ready, !closing, !timerPaused,
-            !confirmed.pendingSleepIntervals.contains(where: { $0.wakeAt == nil }),
+            confirmed.pendingSleepInterval.map({ $0.wakeAt != nil }) ?? true,
             let active = confirmed.activeTimer, ownedTimerEntryID == active.entryID,
             !timerLifecycleGate.state().sleeping
         else { return nil }
@@ -197,7 +197,9 @@ struct WorkspaceOperations: Sendable {
 
     public var timerStatus: TimerStatus {
         guard let snapshot else { return .idle }
-        guard !snapshot.pendingSleepIntervals.contains(where: { $0.wakeAt == nil }) else { return .reviewRequired }
+        guard !(snapshot.pendingSleepInterval.map({ $0.wakeAt == nil }) ?? false) else {
+            return .reviewRequired
+        }
         guard let active = snapshot.activeTimer else { return .idle }
         guard ownedTimerEntryID == active.entryID else { return .reviewRequired }
         if timerPaused || timerLifecycleGate.state().sleeping || state == .blocked {
@@ -277,7 +279,7 @@ struct WorkspaceOperations: Sendable {
             let ordinaryStop: Bool
             if case .stop = command { ordinaryStop = true } else { ordinaryStop = false }
             guard safeStop || !self.timerPaused else { throw TimerError.reviewRequired }
-            guard !before.pendingSleepIntervals.contains(where: { $0.wakeAt == nil }) || safeStop || ordinaryStop else {
+            guard !(before.pendingSleepInterval.map({ $0.wakeAt == nil }) ?? false) || safeStop || ordinaryStop else {
                 throw TimerError.reviewRequired
             }
             var attemptedWrite = false
@@ -291,7 +293,7 @@ struct WorkspaceOperations: Sendable {
                 let result = try await self.timerWrite(library, command, before.revision, sample.instant, UUID())
                 if case .start = command { self.ownedTimerEntryID = result.activeTimer?.entryID }
                 if result.activeTimer == nil { self.ownedTimerEntryID = nil }
-                if safeStop, !result.pendingSleepIntervals.contains(where: { $0.wakeAt == nil }),
+                if safeStop, result.pendingSleepInterval.map({ $0.wakeAt != nil }) ?? true,
                     self.timerLifecycleGate.reset(generation: sample.generation) {
                     self.timerPaused = false
                 }
@@ -352,7 +354,7 @@ struct WorkspaceOperations: Sendable {
         snapshot = value
         if value.activeTimer?.entryID != ownedTimerEntryID { ownedTimerEntryID = nil }
         let owned = value.activeTimer == nil || value.activeTimer?.entryID == ownedTimerEntryID
-        let unknown = value.pendingSleepIntervals.contains { $0.wakeAt == nil }
+        let unknown = value.pendingSleepInterval.map { $0.wakeAt == nil } ?? false
         setState(owned && !unknown && !(timerPaused && value.activeTimer != nil) ? .ready : .reviewRequired)
     }
 
@@ -555,7 +557,7 @@ struct WorkspaceOperations: Sendable {
                 var instant: Int64?
                 var checkpointAt: Int64?
                 if request.start {
-                    guard before.pendingSleepIntervals.isEmpty,
+                    guard before.pendingSleepInterval == nil,
                         before.activeTimer == nil || before.activeTimer?.entryID == self.ownedTimerEntryID,
                         !self.timerPaused
                     else { throw TimerError.reviewRequired }
@@ -843,7 +845,7 @@ extension WorkspaceModel {
     }
 
     private func acknowledgeReview(generation: UInt64, in result: LibrarySnapshot) {
-        guard !result.pendingSleepIntervals.contains(where: { $0.wakeAt == nil }),
+        guard result.pendingSleepInterval.map({ $0.wakeAt != nil }) ?? true,
             result.activeTimer == nil || (result.activeTimer?.entryID == ownedTimerEntryID && !timerPaused),
             handledSleepGeneration == generation || generation <= sessionSleepFloor
         else { return }
@@ -924,15 +926,15 @@ extension WorkspaceModel {
         }
     }
 
-    public func requireTimerReviewAfterClose(sleeping: Bool) {
+    public func requireInterruptedTimerReview(sleeping: Bool) {
         sleepContinuation = nil
         ownedTimerEntryID = nil
         timerPaused = snapshot?.activeTimer != nil
         let generation = timerLifecycleGate.state().generation
         handledSleepGeneration = generation
         if !sleeping { _ = timerLifecycleGate.reset(generation: generation) }
-        if snapshot != nil, state == .ready || state == .reviewRequired {
-            setState(.reviewRequired)
+        if let snapshot, state == .ready || state == .reviewRequired {
+            setConfirmed(snapshot, publishedMutation: false)
         }
     }
 
@@ -953,7 +955,7 @@ extension WorkspaceModel {
                 return
             }
             guard let active = before.activeTimer else {
-                if !before.pendingSleepIntervals.contains(where: { $0.wakeAt == nil }) {
+                if before.pendingSleepInterval.map({ $0.wakeAt != nil }) ?? true {
                     self.sleepContinuation = SleepContinuation(generation: generation, pending: nil)
                 }
                 return
@@ -974,7 +976,7 @@ extension WorkspaceModel {
                 self.setConfirmed(result)
                 self.issue = nil
                 if self.timerLifecycleGate.state().generation == generation,
-                    let pending = result.pendingSleepIntervals.first(where: { $0.id == pendingID }) {
+                    result.pendingSleepInterval?.id == pendingID, let pending = result.pendingSleepInterval {
                     self.sleepContinuation = SleepContinuation(generation: generation, pending: pending)
                 }
             } catch {
@@ -998,14 +1000,14 @@ extension WorkspaceModel {
             self.sleepContinuation = nil  // Duplicate callbacks cannot replace the first supplied wake boundary.
             guard let pending = proof.pending else {
                 guard before.activeTimer == nil,
-                    !before.pendingSleepIntervals.contains(where: { $0.wakeAt == nil }),
+                    before.pendingSleepInterval.map({ $0.wakeAt != nil }) ?? true,
                     let boundary = self.timerLifecycleGate.observedSleep(generation: generation),
                     observedAt >= boundary
                 else { return }
                 _ = self.timerLifecycleGate.reset(generation: generation)
                 return
             }
-            guard before.activeTimer == nil, before.pendingSleepIntervals.contains(pending),
+            guard before.activeTimer == nil, before.pendingSleepInterval == pending,
                 observedAt >= pending.sleepAt
             else { return }
             do {

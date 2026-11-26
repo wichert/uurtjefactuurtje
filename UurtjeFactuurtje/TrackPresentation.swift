@@ -204,11 +204,6 @@ private struct OutlineCacheKey: Equatable {
         default: break
         }
     }
-    func completeReview(_ token: UUID) {
-        guard token == routeToken else { return }
-        acceptedWork = false
-        reconcile()
-    }
     func timer(_ command: TimerCommand, after: (@MainActor () -> Void)? = nil) {
         guard acceptingMutations() else { return }
         let result = workspace.enqueueTimer(command)
@@ -226,10 +221,6 @@ private struct OutlineCacheKey: Equatable {
     func undoCorrection() {
         guard acceptingMutations() else { return }
         finish(workspace.enqueueCorrection(.undo))
-    }
-    func undoTimeReview() {
-        guard acceptingMutations() else { return }
-        finish(workspace.enqueueTimeReview(.undo))
     }
     private func finish(_ result: Task<LibrarySnapshot, Error>) {
         Task { @MainActor in do { _ = try await result.value } catch { failure = String(describing: error) } }
@@ -304,7 +295,7 @@ extension TrackPresentation {
             return
         }
         guard row.endAt != nil else {
-            reviewTime()
+            failure = "This entry is still open. Resolve the interrupted time before editing it."
             return
         }
         present(.correction(CorrectionRoute(id: UUID(), mode: .edit(entryID: entryID))))
@@ -320,7 +311,6 @@ extension TrackPresentation {
         }
         present(.correction(CorrectionRoute(id: UUID(), mode: .delete(entryID: entryID))))
     }
-    func reviewTime() { present(.timeReview(UUID())) }
     func updateTaskDraft(_ draft: TaskDraft) {
         guard case .task(let current) = sheet, current.id == draft.id, !acceptedWork else { return }
         sheet = .task(draft)

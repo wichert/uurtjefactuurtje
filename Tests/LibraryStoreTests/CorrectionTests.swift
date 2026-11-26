@@ -7,7 +7,7 @@ struct CorrectionFixture {
     let project = UUID(), otherProject = UUID(), root = UUID(), leaf = UUID(), otherLeaf = UUID()
     func state(
         _ entries: [TimeEntry] = [], active: ActiveTimer? = nil,
-        pending: [PendingSleepInterval] = [], revision: Int64 = 1
+        pending: PendingSleepInterval? = nil, revision: Int64 = 1
     ) -> LibrarySnapshot {
         LibrarySnapshot(
             schemaVersion: 2, revision: revision,
@@ -20,7 +20,7 @@ struct CorrectionFixture {
                 TaskRecord(id: leaf, projectID: project, parentTaskID: root, name: "Leaf"),
                 TaskRecord(id: otherLeaf, projectID: otherProject, name: "History")
             ],
-            entries: entries, activeTimer: active, pendingSleepIntervals: pending)
+            entries: entries, activeTimer: active, pendingSleepInterval: pending)
     }
     func row(_ start: Int64, _ end: Int64?, task: UUID? = nil, id: UUID = UUID()) -> TimeEntry {
         TimeEntry(id: id, taskID: task ?? leaf, startAt: start, endAt: end)
@@ -32,7 +32,7 @@ struct CorrectionFixture {
         LibrarySnapshot(
             schemaVersion: state.schemaVersion, revision: revision ?? state.revision,
             projects: projects ?? state.projects, tasks: tasks ?? state.tasks, entries: entries ?? state.entries,
-            activeTimer: state.activeTimer, pendingSleepIntervals: state.pendingSleepIntervals)
+            activeTimer: state.activeTimer, pendingSleepInterval: state.pendingSleepInterval)
     }
     func applying(_ mutation: CorrectionMutation, to state: LibrarySnapshot) -> LibrarySnapshot {
         let removed = Set(mutation.before.map(\.id))
@@ -462,7 +462,7 @@ struct CorrectionFixture {
             let pending = PendingSleepInterval(id: UUID(), taskID: fixture.leaf, sleepAt: 50, wakeAt: wake)
             #expect(throws: TimerError.reviewRequired) {
                 try gate.correctionSample(
-                    in: fixture.state(pending: [pending]), ownedEntryID: nil, paused: false,
+                    in: fixture.state(pending: pending), ownedEntryID: nil, paused: false,
                     clock: { 110 })
             }
         }

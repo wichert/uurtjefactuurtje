@@ -7,8 +7,8 @@ import UserNotifications
 @testable import LibraryStore
 @testable import UurtjeFactuurtje
 
-@MainActor struct DeferredWakeAndNoticeTests {
-    @Test func wakeIntentDefersCoalescesAndResumesAfterDraftAndQuit() async throws {
+@MainActor @Suite(.serialized) struct DeferredWakeAndNoticeTests {
+    @Test func wakePresentsOneRecoveryImmediatelyAndPreservesDraft() async throws {
         try await withTrack { track, directory in
             let host = NativeHost(directory: directory, workspace: track.workspace)
             defer { host.invalidate() }
@@ -21,40 +21,220 @@ import UserNotifications
             await host.drain()
             host.track.editProject(projectID)
             let token = host.track.routeToken
-            let quit = try #require(host.beginQuit())
+            var presented: [TimeReviewController] = []
+            var opens = 0
+            host.recoveryPresentationHandler = { presented.append($0) }
+            host.installSceneActions(workspace: { opens += 1 }, settings: {})
             clock.set(110)
             lifecycle.willSleep()
             await host.drain()
             lifecycle.didWake(at: Date(timeIntervalSince1970: 120))
             await host.drain()
-            #expect(track.workspace.snapshot?.pendingSleepIntervals.count == 1)
-            #expect(host.pendingAutoReview && host.track.routeToken == token)
+            #expect(track.workspace.snapshot?.pendingSleepInterval?.wakeAt == 120)
+            #expect(presented.count == 1 && host.recoveryPresented)
+            #expect(host.track.routeToken == token && host.track.sheet?.id == projectID)
+            #expect(!host.acceptingMutations)
             host.requestAutoReviewIfNeeded()
             host.requestAutoReviewIfNeeded()
-            var opens = 0
-            host.installSceneActions(
-                workspace: {
-                    opens += 1
-                    host.installSceneActions(workspace: { opens += 1 }, settings: {})
-                }, settings: {})
-            #expect(opens == 0)
-            host.track.cancelSheet()
-            host.requestAutoReviewIfNeeded()
-            #expect(opens == 0 && host.pendingAutoReview)
-            let before = track.workspace.snapshot
-            host.finishQuit(quit, cancelled: true)
-            #expect(opens == 1 && !host.pendingAutoReview)
-            guard case .timeReview = host.track.sheet else {
-                Issue.record("Missing automatic review")
-                return
-            }
-            #expect(track.workspace.snapshot == before)
-            host.requestAutoReviewIfNeeded()
-            #expect(opens == 1 && !host.pendingAutoReview)
+            #expect(presented.count == 1 && opens == 0)
+            #expect(host.beginQuit() == nil)
+            let pending = try #require(track.workspace.snapshot?.pendingSleepInterval)
+            let preview = try SleepPlanner.skip(pending, in: try #require(track.workspace.snapshot))
+            let submission = try #require(presented[0].submit(.skip(preview)))
+            await submission.value
+            await host.drain()
+            #expect(track.workspace.snapshot?.pendingSleepInterval == nil)
+            #expect(!host.recoveryPresented && host.acceptingMutations)
+            #expect(host.track.routeToken == token && host.track.sheet?.id == projectID)
+            // Skip may delete the sole open zero-duration entry; keep fixture teardown readable.
+            if track.workspace.availability == .closed { try await track.workspace.open() }
         }
     }
 
-    @Test func cancellingFinalSuspendedDraftAutomaticallyRetriesReview() async throws {
+    @Test(arguments: [false, true])
+    func unlockingReviewsOneIntervalFromLockToUnlock(alsoSleeps: Bool) async throws {
+        try await withTrack { track, directory in
+            let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
+            let clock = NativeClock()
+            let lifecycle = Lifecycle(host: host)
+            track.workspace.configureTimer(clock: { clock.read() })
+            let projectID = try await project(track)
+            let leaf = try await task(track, project: projectID)
+            var presented: [TimeReviewController] = []
+            host.recoveryPresentationHandler = { presented.append($0) }
+            host.installSceneActions(workspace: {}, settings: {})
+            host.submitTimer(.start(taskID: leaf))
+            await host.drain()
+
+            clock.set(110)
+            lifecycle.willSleep(.screenLock)
+            clock.set(120)
+            lifecycle.willSleep(.screenLock)  // Duplicate lock does not move the start.
+            if alsoSleeps { lifecycle.willSleep() }
+            clock.set(130)
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 130))
+            await host.drain()
+            #expect(lifecycle.sleeping && presented.isEmpty)
+            #expect(track.workspace.snapshot?.pendingSleepInterval?.wakeAt == nil)
+
+            clock.set(140)
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 140), .screenLock)
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 141), .screenLock)
+            await host.drain()
+            let snapshot = try #require(track.workspace.snapshot)
+            let interval = try #require(snapshot.pendingSleepInterval)
+            let active = try #require(snapshot.activeTimer)
+            #expect(presented.count == 1)
+            #expect(!lifecycle.sleeping && !host.acceptingMutations)
+            #expect(interval.taskID == leaf && interval.sleepAt == 110 && interval.wakeAt == 140)
+            #expect(active.checkpointAt == 140)
+            #expect(snapshot.entries.filter { $0.endAt != nil }.map(\.endAt) == [110])
+
+            let preview = try SleepPlanner.include(interval, endAt: nil, in: snapshot)
+            let controller = try #require(presented.first)
+            await controller.submit(.include(preview))?.value
+            let resolved = try #require(track.workspace.snapshot)
+            #expect(resolved.entries.contains { $0.taskID == leaf && $0.startAt == 110 && $0.endAt == 140 })
+            #expect(resolved.activeTimer == active && resolved.pendingSleepInterval == nil)
+            #expect(!host.recoveryPresented && host.acceptingMutations)
+        }
+    }
+
+    @Test func anotherLockDuringReviewLeavesExistingIntervalAndRequiresExplicitTimerEnd() async throws {
+        try await withTrack { track, directory in
+            let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
+            let clock = NativeClock()
+            let lifecycle = Lifecycle(host: host)
+            track.workspace.configureTimer(clock: { clock.read() })
+            let projectID = try await project(track)
+            let leaf = try await task(track, project: projectID)
+            host.recoveryPresentationHandler = { _ in }
+            host.installSceneActions(workspace: {}, settings: {})
+            host.submitTimer(.start(taskID: leaf))
+            await host.drain()
+            clock.set(110)
+            lifecycle.willSleep()
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 120))
+            await host.drain()
+            let saved = try #require(track.workspace.snapshot)
+            let controller = try #require(host.recoveryController)
+
+            clock.set(130)
+            lifecycle.willSleep(.screenLock)
+            clock.set(140)
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 140), .screenLock)
+            await host.drain()
+            #expect(host.recoveryController === controller)
+            #expect(track.workspace.snapshot == saved)
+            #expect(track.workspace.timerStatus == .reviewRequired)
+
+            let resolved = try SleepPlanner.interruption(endAt: nil, in: saved)
+            await controller.submit(.resolveInterruption(resolved))?.value
+            let pending = try #require(track.workspace.snapshot?.pendingSleepInterval)
+            #expect(pending == saved.pendingSleepInterval && track.workspace.snapshot?.activeTimer == nil)
+            let nextController = try #require(host.recoveryController)
+            #expect(nextController !== controller)
+            let skipped = try SleepPlanner.skip(pending, in: try #require(track.workspace.snapshot))
+            await nextController.submit(.skip(skipped))?.value
+            #expect(!host.recoveryPresented && host.acceptingMutations)
+        }
+    }
+
+    @Test(arguments: ["Review Save & Stop", "Review explicit discard"])
+    func interruptedPanelShowsReviewChoices(action: String) async throws {
+        try await withTrack { track, directory in
+            let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer {
+                host.recoveryPanel?.close()
+                host.invalidate()
+            }
+            let clock = NativeClock()
+            track.workspace.configureTimer(clock: { clock.read() })
+            let projectID = try await project(track)
+            let leaf = try await task(track, project: projectID)
+            host.submitTimer(.start(taskID: leaf))
+            await host.drain()
+            host.installSceneActions(workspace: {}, settings: {})
+            clock.set(110)
+            _ = try await track.workspace.enqueueTimer(.checkpoint).value
+            await track.workspace.close()
+            try await track.workspace.open()
+            clock.set(170)
+            await host.drain()
+            let panel = try #require(host.recoveryPanel)
+            try #require(panel.contentViewController).view.layoutSubtreeIfNeeded()
+            #expect(panel.frame.height >= 600)
+            var buttons: [NSButton] = []
+            func inspect(_ view: NSView) {
+                if let button = view as? NSButton, !button.isHidden { buttons.append(button) }
+                view.subviews.forEach(inspect)
+            }
+            inspect(try #require(panel.contentView))
+            #expect(buttons.contains { $0.title == "Review Save & Stop" })
+            #expect(buttons.contains { $0.title == "Review explicit discard" })
+            try #require(buttons.first { $0.title == action }).performClick(nil)
+            inspect(try #require(panel.contentView))
+            #expect(!buttons.contains { $0.title == "Confirm reviewed action" && $0.isHidden })
+            try #require(buttons.first { $0.title == "Confirm reviewed action" }).performClick(nil)
+            await host.drain()
+            #expect(host.recoveryPanel == nil)
+            #expect(track.workspace.snapshot?.pendingSleepInterval == nil)
+            #expect(track.workspace.snapshot?.activeTimer == nil)
+            if action == "Review Save & Stop" {
+                #expect(track.workspace.snapshot?.entries.contains { $0.endAt == 110 } == true)
+            } else {
+                #expect(track.workspace.snapshot?.entries.isEmpty == true)
+            }
+        }
+    }
+
+    @Test func knownGapPanelShowsTimeAndChoices() async throws {
+        try await withTrack { track, directory in
+            let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
+            let clock = NativeClock()
+            let lifecycle = Lifecycle(host: host)
+            track.workspace.configureTimer(clock: { clock.read() })
+            let projectID = try await project(track)
+            let leaf = try await task(track, project: projectID)
+            host.submitTimer(.start(taskID: leaf))
+            await host.drain()
+            host.installSceneActions(workspace: {}, settings: {})
+            clock.set(110)
+            lifecycle.willSleep()
+            await host.drain()
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 170))
+            await host.drain()
+            let panel = try #require(host.recoveryPanel)
+            try #require(panel.contentViewController).view.layoutSubtreeIfNeeded()
+            #expect(panel.frame.height >= 300)
+            var labels: [NSTextField] = []
+            var buttons: [NSButton] = []
+            func inspect(_ view: NSView) {
+                if let label = view as? NSTextField { labels.append(label) }
+                if let button = view as? NSButton { buttons.append(button) }
+                view.subviews.forEach(inspect)
+            }
+            inspect(try #require(panel.contentView))
+            #expect(labels.contains { $0.stringValue.contains("Time away:") })
+            #expect(labels.contains { $0.stringValue.contains("Task:") })
+            #expect(buttons.contains { $0.title == "Track Time" })
+            #expect(buttons.contains { $0.title == "Don’t Track" })
+            clock.set(180)
+            let controller = try #require(host.recoveryController)
+            let snapshot = try #require(track.workspace.snapshot)
+            let preview = try SleepPlanner.include(snapshot.pendingSleepInterval!, endAt: nil, in: snapshot)
+            await controller.submit(.include(preview))?.value
+            await host.drain()
+            #expect(controller.error == nil)
+            #expect(track.workspace.snapshot?.pendingSleepInterval == nil)
+            #expect(!host.recoveryPresented)
+        }
+    }
+
+    @Test func recoveryDoesNotReplaceSuspendedTaskDraft() async throws {
         try await withTrack { track, directory in
             let host = NativeHost(directory: directory, workspace: track.workspace)
             defer { host.invalidate() }
@@ -68,28 +248,21 @@ import UserNotifications
             await host.drain()
             host.track.newTask(projectID: projectID, parentID: root)
             host.track.editConstrainingBudget(taskID: root)
-            var opens = 0
-            host.installSceneActions(workspace: { opens += 1 }, settings: {})
+            let suspended = host.track.suspendedTaskDraft
+            host.recoveryPresentationHandler = { _ in }
+            host.installSceneActions(workspace: {}, settings: {})
             clock.set(110)
             lifecycle.willSleep()
             await host.drain()
             lifecycle.didWake(at: Date(timeIntervalSince1970: 120))
             await host.drain()
-            #expect(host.pendingAutoReview && opens == 0)
-            host.track.cancelSheet()
-            #expect(host.track.suspendedTaskDraft == nil && host.track.sheet != nil)
-            host.track.cancelSheet()
-            // Match the host's observation callback without first a or polling loop.
-            await Task { @MainActor in }.value
-            #expect(opens == 1 && !host.pendingAutoReview)
-            guard case .timeReview = host.track.sheet else {
-                Issue.record("Missing deferred review")
-                return
-            }
+            #expect(host.recoveryPresented)
+            #expect(host.track.suspendedTaskDraft?.name == suspended?.name)
+            #expect(host.track.sheet?.id == root)
         }
     }
 
-    @Test func acceptedWorkAndUnavailableLibraryKeepAutomaticIntent() async throws {
+    @Test func recoveryCoalescesAcrossReopenAndUnavailableSnapshot() async throws {
         try await withTrack { track, directory in
             let host = NativeHost(directory: directory, workspace: track.workspace)
             defer { host.invalidate() }
@@ -100,28 +273,21 @@ import UserNotifications
             let leaf = try await task(track, project: projectID)
             host.submitTimer(.start(taskID: leaf))
             await host.drain()
-            host.track.editProject(projectID)
-            let token = host.track.routeToken
-            #expect(host.track.begin(token))
+            var presented: [TimeReviewController] = []
+            host.recoveryPresentationHandler = { presented.append($0) }
+            host.installSceneActions(workspace: {}, settings: {})
             clock.set(110)
             lifecycle.willSleep()
             await host.drain()
             lifecycle.didWake(at: Date(timeIntervalSince1970: 120))
             await host.drain()
-            var opens = 0
-            host.installSceneActions(workspace: { opens += 1 }, settings: {})
-            #expect(host.pendingAutoReview && opens == 0 && host.track.acceptedWork)
+            #expect(presented.count == 1)
             await track.workspace.close()
-            host.track.complete(token)
             host.requestAutoReviewIfNeeded()
-            #expect(opens == 0 && host.pendingAutoReview)
+            #expect(presented.count == 1 && host.recoveryPresented)
             host.reopen()
             await host.drain()
-            #expect(opens == 1 && !host.pendingAutoReview)
-            guard case .timeReview = host.track.sheet else {
-                Issue.record("Missing reopened review")
-                return
-            }
+            #expect(presented.count == 1 && host.recoveryPresented)
         }
     }
 
@@ -365,7 +531,7 @@ extension NativeHostTests {
         #expect(!workspace.publicationUncertain && !host.hasUncertainPublication)
         #expect(host.track.failure == nil && host.reopenFailure == nil)
         #expect(host.hasRecoveryFeedback)  // Real helper must expose Review time even with no issue/error.
-        #expect(host.recoveryMessage.contains("Time needs review"))
+        #expect(host.recoveryMessage.contains("Resolve interrupted time"))
         #expect(host.recoveryMessage.contains("unbilled"))
     }
 }

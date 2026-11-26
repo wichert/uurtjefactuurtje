@@ -189,7 +189,7 @@ extension NativeHostTests {
             host.track.timer(.stop(expectedEntryID: nil))
             host.track.undoMigration(receiptID: UUID())
             host.track.undoCorrection()
-            host.track.undoTimeReview()
+            host.track.undoCorrection()
             #expect(host.submitFirstWeekday(5) == nil)
             #expect(host.track.acceptedWork)
             Task { await gate.release() }
@@ -219,6 +219,8 @@ extension NativeHostTests {
         let before = context.before
         let projectID = context.projectID
         let lifecycle = Lifecycle(host: host)
+        host.recoveryPresentationHandler = { _ in }
+        host.installSceneActions(workspace: {}, settings: {})
         let confirmation = NativeSubmissionGate()
         lifecycle.confirmQuit = {
             await confirmation.pause()
@@ -238,7 +240,7 @@ extension NativeHostTests {
                 host.track.timer(.stop(expectedEntryID: nil))
                 host.track.undoMigration(receiptID: UUID())
                 host.track.undoCorrection()
-                host.track.undoTimeReview()
+                host.track.undoCorrection()
                 #expect(host.submitFirstWeekday(6) == nil)
                 #expect(!track.workspace.isBusy && track.workspace.snapshot == before)
                 clock.set(110)
@@ -247,7 +249,7 @@ extension NativeHostTests {
                 await confirmation.release()
             }
         }
-        #expect(closes == 0 && host.acceptingMutations)
+        #expect(closes == 0 && !host.acceptingMutations)
         let resumed = try #require(track.workspace.snapshot?.activeTimer)
         #expect(resumed.entryID != before?.activeTimer?.entryID && resumed.checkpointAt == 120)
         #expect(
@@ -255,11 +257,11 @@ extension NativeHostTests {
         #expect(
             track.workspace.snapshot?.entries.first(where: { $0.id == before?.activeTimer?.entryID })?
                 .endAt == 110)
-        #expect(track.workspace.snapshot?.pendingSleepIntervals.first?.sleepAt == 110)
-        #expect(track.workspace.snapshot?.pendingSleepIntervals.first?.wakeAt == 120)
+        #expect(track.workspace.snapshot?.pendingSleepInterval?.sleepAt == 110)
+        #expect(track.workspace.snapshot?.pendingSleepInterval?.wakeAt == 120)
+        #expect(host.recoveryPresented)
         #expect(host.track.sheet?.id == projectID && !host.track.acceptedWork)
-        #expect(host.track.begin(token))
-        host.track.complete(token)
+        #expect(!host.track.begin(token))
         host.invalidate()
     }
 
@@ -298,7 +300,7 @@ extension NativeHostTests {
         #expect(!host.recoveryDetails.isEmpty)
         host.reopen()
         await host.drain()
-        #expect(host.acceptingMutations)
+        #expect(!host.acceptingMutations)
         #expect(track.workspace.snapshot?.activeTimer != nil)
         #expect(track.workspace.snapshot?.entries.last?.endAt == nil)  // Paused timer is left unchanged for review.
         host.invalidate()

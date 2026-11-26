@@ -84,7 +84,7 @@ extension MenuBarStatusTests {
             #expect(host.workspace.snapshot == before)
             #expect(host.workspace.snapshot?.activeTimer == nil)
             try verifyMenuRoutes(host: host, selectedTaskID: id)
-            #expect(opens == 5)
+            #expect(opens == 4)
             #expect(host.track.workspace === host.workspace)
             #expect(host.workspace === track.workspace)
             #expect(track.workspace.snapshot == before)
@@ -124,10 +124,9 @@ extension MenuBarStatusTests {
         }
         #expect(draft.isNew)
         let token = host.track.routeToken
-        host.openReview()
+        host.revealNotificationTask(selectedTaskID)
         #expect(host.track.routeToken == token)
         #expect(host.track.sheet?.id == draft.id)
-        #expect(host.track.feedback != nil)
         host.track.cancelSheet()
         host.addTime()
         guard case .correction(let route) = host.track.sheet else {
@@ -140,10 +139,5 @@ extension MenuBarStatusTests {
         }
         #expect(selected == selectedTaskID)
         host.track.cancelSheet()
-        host.openReview()
-        guard case .timeReview = host.track.sheet else {
-            Issue.record("Missing routed time review")
-            return
-        }
     }
 }

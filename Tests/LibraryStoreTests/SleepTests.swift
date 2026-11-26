@@ -7,7 +7,7 @@ private struct SleepFixture: Sendable {
     let project = UUID(), otherProject = UUID(), root = UUID(), leaf = UUID(), otherLeaf = UUID()
     func state(
         _ entries: [TimeEntry] = [], active: ActiveTimer? = nil,
-        pending: [PendingSleepInterval] = [], archived: Bool = false,
+        pending: PendingSleepInterval? = nil, archived: Bool = false,
         renamed: Bool = false
     ) -> LibrarySnapshot {
         LibrarySnapshot(
@@ -21,7 +21,7 @@ private struct SleepFixture: Sendable {
                 TaskRecord(id: leaf, projectID: project, parentTaskID: root, name: renamed ? "Changed" : "Leaf"),
                 TaskRecord(id: otherLeaf, projectID: otherProject, name: "Other")
             ],
-            entries: entries, activeTimer: active, pendingSleepIntervals: pending)
+            entries: entries, activeTimer: active, pendingSleepInterval: pending)
     }
     func row(_ start: Int64, _ end: Int64?, task: UUID? = nil, id: UUID = UUID()) -> TimeEntry {
         TimeEntry(id: id, taskID: task ?? leaf, startAt: start, endAt: end)
@@ -39,8 +39,8 @@ private struct SleepFixture: Sendable {
             projects: state.projects, tasks: state.tasks,
             entries: state.entries.filter { !removed.contains($0.id) } + mutation.entries.after,
             activeTimer: mutation.restoreActive ?? (mutation.removeActive == nil ? state.activeTimer : nil),
-            pendingSleepIntervals: state.pendingSleepIntervals.filter { $0.id != mutation.removePending?.id }
-                + (mutation.restorePending.map { [$0] } ?? []))
+            pendingSleepInterval: mutation.restorePending
+                ?? state.pendingSleepInterval.flatMap { $0.id == mutation.removePending?.id ? nil : $0 })
     }
     func seed(_ database: isolated Storage, state: LibrarySnapshot) throws {
         func key(_ id: UUID) -> SQLValue { .text(id.uuidString.lowercased()) }
@@ -73,7 +73,7 @@ private struct SleepFixture: Sendable {
                 "INSERT INTO active_timer(id,entry_id,checkpoint_at) VALUES (1,?,?)",
                 bindings: [key(timer.entryID), .integer(timer.checkpointAt)], expectedChanges: 1)
         }
-        for project in state.pendingSleepIntervals {
+        if let project = state.pendingSleepInterval {
             try database.runCommand(
                 "INSERT INTO pending_sleep_intervals(id,task_id,sleep_at,wake_at) VALUES (?,?,?,?)",
                 bindings: [
@@ -89,23 +89,26 @@ private struct SleepFixture: Sendable {
         let fixture = SleepFixture()
         let known = fixture.pending()
         let unknown = fixture.pending(40, nil)
-        let state = fixture.state(pending: [known, unknown])
+        let state = fixture.state(pending: known)
+        let unknownState = fixture.state(pending: unknown)
         let included = try SleepPlanner.include(known, endAt: nil, in: state)
         #expect(included.correction.draft.entry.startAt == 20 && included.correction.draft.entry.endAt == 30)
         #expect(throws: SleepError.invalidEnd) { try SleepPlanner.include(known, endAt: 31, in: state) }
-        #expect(throws: SleepError.missingEnd) { try SleepPlanner.include(unknown, endAt: nil, in: state) }
+        #expect(throws: SleepError.missingEnd) { try SleepPlanner.include(unknown, endAt: nil, in: unknownState) }
         for end: Int64 in [39, 40] {
-            #expect(throws: SleepError.invalidEnd) { try SleepPlanner.include(unknown, endAt: end, in: state) }
+            #expect(throws: SleepError.invalidEnd) {
+                try SleepPlanner.include(unknown, endAt: end, in: unknownState)
+            }
         }
         let huge = fixture.pending(.min, nil)
         #expect(throws: SleepError.invalidEnd) {
             try SleepPlanner.include(
                 huge, endAt: .max,
-                in: fixture.state(pending: [huge]))
+                in: fixture.state(pending: huge))
         }
-        let explicit = try SleepPlanner.include(unknown, endAt: 50, in: state)
+        let explicit = try SleepPlanner.include(unknown, endAt: 50, in: unknownState)
         #expect(throws: CorrectionError.futureEnd) {
-            try TimeReviewMutation.plan(.include(explicit), receipt: nil, in: state, now: 49)
+            try TimeReviewMutation.plan(.include(explicit), receipt: nil, in: unknownState, now: 49)
         }
         let missing = fixture.pending(task: UUID())
         #expect(throws: SleepError.staleReview) { try SleepPlanner.skip(missing, in: state) }
@@ -113,7 +116,7 @@ private struct SleepFixture: Sendable {
             .skip(SleepPlanner.skip(known, in: state)), receipt: nil, in: state,
             now: 50)
         let result = fixture.applying(skipped.mutation, to: state)
-        #expect(result.entries.isEmpty && result.pendingSleepIntervals == [unknown])
+        #expect(result.entries.isEmpty && result.pendingSleepInterval == nil)
         #expect(try TimeReviewMutation.undo(#require(skipped.receipt), in: result, now: 50).restorePending == known)
     }
 
@@ -121,7 +124,7 @@ private struct SleepFixture: Sendable {
         let fixture = SleepFixture()
         let pending = fixture.pending(20, 80)
         let rows = [fixture.row(0, 30), fixture.row(40, 50, task: fixture.otherLeaf), fixture.row(70, 100)]
-        let state = fixture.state(rows, pending: [pending])
+        let state = fixture.state(rows, pending: pending)
         let shown = try SleepPlanner.include(pending, endAt: nil, in: state)
         #expect(shown.correction.adjustments.count == 3)
         let planned = try TimeReviewMutation.plan(.include(shown), receipt: nil, in: state, now: 100)
@@ -134,26 +137,26 @@ private struct SleepFixture: Sendable {
             try TimeReviewMutation.plan(
                 .include(shown), receipt: nil,
                 in: fixture.state(
-                    rows, pending: [pending],
+                    rows, pending: pending,
                     renamed: true), now: 100)
         }
         let whole = fixture.row(0, 100)
-        let splitState = fixture.state([whole], pending: [pending])
+        let splitState = fixture.state([whole], pending: pending)
         let split = try SleepPlanner.include(pending, endAt: nil, in: splitState)
         let right = try #require(split.correction.adjustments.first?.retained.last)
         let unrelated = fixture.row(110, 120, task: fixture.otherLeaf)
         let accepted = try TimeReviewMutation.plan(
             .include(split), receipt: nil,
-            in: fixture.state([whole, unrelated], pending: [pending]), now: 120)
+            in: fixture.state([whole, unrelated], pending: pending), now: 120)
         #expect(accepted.mutation.entries.after.contains(right))
         #expect(throws: CorrectionError.stalePreview) {
             try TimeReviewMutation.plan(
                 .include(split), receipt: nil,
-                in: fixture.state([fixture.row(0, 99, id: whole.id)], pending: [pending]), now: 120)
+                in: fixture.state([fixture.row(0, 99, id: whole.id)], pending: pending), now: 120)
         }
         let undone = try TimeReviewMutation.undo(
             #require(accepted.receipt),
-            in: fixture.applying(accepted.mutation, to: fixture.state([whole, unrelated], pending: [pending])),
+            in: fixture.applying(accepted.mutation, to: fixture.state([whole, unrelated], pending: pending)),
             now: 120)
         #expect(undone.entries.after == [whole] && undone.restorePending == pending)
     }
@@ -162,13 +165,13 @@ private struct SleepFixture: Sendable {
         let fixture = SleepFixture()
         let pending = fixture.pending(20, 40)
         let open = fixture.row(30, nil)
-        let running = fixture.state([open], active: ActiveTimer(entryID: open.id, checkpointAt: 35), pending: [pending])
+        let running = fixture.state([open], active: ActiveTimer(entryID: open.id, checkpointAt: 35), pending: pending)
         let shown = try SleepPlanner.include(pending, endAt: nil, in: running)
         #expect(shown.correction.runningConflict == open)
         #expect(throws: CorrectionError.runningConflict) {
             try TimeReviewMutation.plan(.include(shown), receipt: nil, in: running, now: 50)
         }
-        let stopped = fixture.state([fixture.row(30, 50, id: open.id)], pending: [pending])
+        let stopped = fixture.state([fixture.row(30, 50, id: open.id)], pending: pending)
         #expect(throws: CorrectionError.stalePreview) {
             try TimeReviewMutation.plan(.include(shown), receipt: nil, in: stopped, now: 50)
         }
@@ -178,7 +181,7 @@ private struct SleepFixture: Sendable {
         let postWake = fixture.row(40, nil)
         let safe = fixture.state(
             [postWake], active: ActiveTimer(entryID: postWake.id, checkpointAt: 50),
-            pending: [pending])
+            pending: pending)
         let safePlan = try TimeReviewMutation.plan(
             .include(SleepPlanner.include(pending, endAt: nil, in: safe)),
             receipt: nil, in: safe, now: 50)
@@ -224,7 +227,7 @@ private struct SleepFixture: Sendable {
                 in: fixture.state([open], active: active, renamed: true), now: 40)
         }
         let pending = fixture.pending()
-        let archived = fixture.state(pending: [pending], archived: true)
+        let archived = fixture.state(pending: pending, archived: true)
         #expect(
             try TimeReviewMutation.plan(
                 .include(SleepPlanner.include(pending, endAt: nil, in: archived)),
@@ -236,7 +239,7 @@ private struct SleepFixture: Sendable {
         let fixture = SleepFixture()
         let pending = fixture.pending()
         let row = fixture.row(0, 100)
-        let state = fixture.state([row], pending: [pending])
+        let state = fixture.state([row], pending: pending)
         let plan = try TimeReviewMutation.plan(
             .include(SleepPlanner.include(pending, endAt: nil, in: state)),
             receipt: nil, in: state, now: 100)
@@ -244,7 +247,7 @@ private struct SleepFixture: Sendable {
         let after = fixture.applying(plan.mutation, to: state)
         #expect(throws: SleepError.undoUnavailable) { try TimeReviewMutation.undo(receipt, in: after, now: 99) }
         #expect(throws: SleepError.undoUnavailable) {
-            try TimeReviewMutation.undo(receipt, in: fixture.state(after.entries, pending: [pending]), now: 100)
+            try TimeReviewMutation.undo(receipt, in: fixture.state(after.entries, pending: pending), now: 100)
         }
         let changed = after.entries.map {
             $0.id == receipt.entries.after[0].id
@@ -261,7 +264,7 @@ private struct SleepFixture: Sendable {
         #expect(throws: SleepError.undoUnavailable) {
             try TimeReviewMutation.undo(
                 receipt,
-                in: fixture.state(after.entries, pending: [reused]), now: 100)
+                in: fixture.state(after.entries, pending: reused), now: 100)
         }
         let invalidOwners = TimeReviewReceipt(
             entries: CorrectionReceipt(
@@ -297,21 +300,17 @@ private struct SleepFixture: Sendable {
         #expect(throws: SleepError.undoUnavailable) {
             try TimeReviewMutation.undo(
                 activeReceipt,
-                in: fixture.state(pending: [fixture.pending(100, nil)]), now: 130)
+                in: fixture.state(pending: fixture.pending(100, nil)), now: 130)
         }
         let unknown = fixture.pending(100, nil)
-        let unknownState = fixture.state(pending: [unknown])
+        let unknownState = fixture.state(pending: unknown)
         let skip = try TimeReviewMutation.plan(
             .skip(SleepPlanner.skip(unknown, in: unknownState)), receipt: nil,
             in: unknownState, now: 130)
         #expect(throws: SleepError.undoUnavailable) {
             try TimeReviewMutation.undo(
                 #require(skip.receipt),
-                in: fixture.state(pending: [
-                    fixture.pending(
-                        110,
-                        nil)
-                ]), now: 130)
+                in: fixture.state(pending: fixture.pending(110, nil)), now: 130)
         }
         #expect(throws: SleepError.undoUnavailable) {
             try TimeReviewMutation.undo(
@@ -335,17 +334,17 @@ private struct SleepFixture: Sendable {
         let seeded = try await library.transact(expectedRevision: 0) { database, _ in
             try fixture.seed(
                 database,
-                state: fixture.state([original], pending: [pending]))
+                state: fixture.state([original], pending: pending))
         }
         let shown = try SleepPlanner.include(pending, endAt: nil, in: seeded.snapshot)
         let saved = try await library.performTimeReview(
             .include(shown), receipt: nil, expectedRevision: 1,
             instant: 100)
-        #expect(saved.snapshot.revision == 2 && saved.snapshot.pendingSleepIntervals.isEmpty)
+        #expect(saved.snapshot.revision == 2 && saved.snapshot.pendingSleepInterval == nil)
         #expect(saved.snapshot.entries.contains(shown.correction.adjustments[0].retained[1]))
         let undone = try await library.performTimeReview(.undo, receipt: saved.value, expectedRevision: 2, instant: 100)
         #expect(undone.snapshot.revision == 3 && undone.snapshot.entries == [original])
-        #expect(undone.snapshot.pendingSleepIntervals == [pending] && undone.value == nil)
+        #expect(undone.snapshot.pendingSleepInterval == pending && undone.value == nil)
         await library.close()
         let reopened = try await Library.open(at: directory)
         #expect(try await reopened.snapshot() == undone.snapshot)
@@ -361,13 +360,13 @@ private struct SleepFixture: Sendable {
         fixture.clock.set(900)
         await model.enqueueSleepObservation(generation: generation).value
         let sleeping = try #require(model.snapshot)
-        let pending = try #require(sleeping.pendingSleepIntervals.first)
+        let pending = try #require(sleeping.pendingSleepInterval)
         #expect(sleeping.entries.first?.endAt == 110 && sleeping.activeTimer == nil && pending.sleepAt == 110)
         await model.enqueueWakeObservation(generation: generation, observedAt: 120).value
         let awake = try #require(model.snapshot)
         let activeID = try #require(awake.activeTimer?.entryID)
         #expect(awake.entries.first { $0.id == activeID }?.startAt == 120)
-        #expect(awake.pendingSleepIntervals.first?.wakeAt == 120)
+        #expect(awake.pendingSleepInterval?.wakeAt == 120)
         await model.enqueueWakeObservation(generation: generation, observedAt: 125).value
         #expect(model.snapshot == awake)
         fixture.clock.set(130)
@@ -379,9 +378,10 @@ private struct SleepFixture: Sendable {
         await model.enqueueWakeObservation(generation: generation, observedAt: 150).value
         #expect(model.timerLifecycleGate.state().sleeping)
         await model.enqueueWakeObservation(generation: second, observedAt: 150).value
+        // An unresolved pending interval keeps the app blocked: the later sleep is not recorded.
         let again = try #require(model.snapshot)
-        #expect(again.pendingSleepIntervals.count == 2)
-        #expect(again.pendingSleepIntervals.first { $0.id == pending.id }?.taskID == fixture.first)
+        #expect(again.pendingSleepInterval?.id == pending.id)
+        #expect(again.pendingSleepInterval?.taskID == fixture.first)
         await model.close()
         try await model.open()
         await model.enqueueWakeObservation(generation: second, observedAt: 160).value
@@ -403,7 +403,7 @@ private struct SleepFixture: Sendable {
         await model.enqueueSleepObservation(generation: equal).value
         #expect(model.snapshot?.entries.isEmpty == true)
         await model.enqueueWakeObservation(generation: equal, observedAt: 100).value
-        #expect(model.snapshot?.pendingSleepIntervals.isEmpty == true && model.snapshot?.activeTimer != nil)
+        #expect(model.snapshot?.pendingSleepInterval == nil && model.snapshot?.activeTimer != nil)
         fixture.clock.set(110)
         let reversed = model.timerLifecycleGate.latchSleep()
         await model.enqueueSleepObservation(generation: reversed).value
@@ -414,11 +414,11 @@ private struct SleepFixture: Sendable {
         await #expect(throws: TimerError.reviewRequired) {
             try await model.enqueueTimer(.start(taskID: fixture.second)).value
         }
-        let shown = try SleepPlanner.skip(#require(sleeping.pendingSleepIntervals.first), in: sleeping)
+        let shown = try SleepPlanner.skip(#require(sleeping.pendingSleepInterval), in: sleeping)
         _ = try await model.enqueueTimeReview(.skip(shown)).value
         #expect(!model.timerLifecycleGate.state().sleeping && model.canUndoTimeReview)
         _ = try await model.enqueueTimeReview(.undo).value
-        #expect(model.snapshot?.pendingSleepIntervals == sleeping.pendingSleepIntervals && !model.canUndoTimeReview)
+        #expect(model.snapshot?.pendingSleepInterval == sleeping.pendingSleepInterval && !model.canUndoTimeReview)
         await #expect(throws: TimerError.reviewRequired) {
             try await model.enqueueTimer(.start(taskID: fixture.second)).value
         }
@@ -467,7 +467,7 @@ extension SleepTests {
                     let initial =
                         interruption
                         ? fixture.state([row], active: ActiveTimer(entryID: row.id, checkpointAt: 50))
-                        : fixture.state([row], pending: [pending])
+                        : fixture.state([row], pending: pending)
                     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     defer { try? FileManager.default.removeItem(at: directory) }
@@ -511,7 +511,7 @@ extension SleepTests {
                     let expected = fault == .acknowledgementLost ? fixture.applying(mutation, to: before) : before
                     #expect(CorrectionPlanner.ordered(saved.entries) == CorrectionPlanner.ordered(expected.entries))
                     #expect(saved.activeTimer == expected.activeTimer)
-                    #expect(saved.pendingSleepIntervals == expected.pendingSleepIntervals)
+                    #expect(saved.pendingSleepInterval == expected.pendingSleepInterval)
                     await reopened.close()
                 }
             }

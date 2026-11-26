@@ -8,10 +8,8 @@ struct MenuBarStatus: Equatable {
 
     @MainActor static func project(host: NativeHost, at date: Date) -> MenuBarStatus {
         let model = host.workspace
-        let pendingCount = model.snapshot?.pendingSleepIntervals.count ?? 0
-        let pendingDescription =
-            pendingCount > 0
-            ? ", \(pendingCount) pending sleep interval(s) need review — unbilled" : ""
+        let pendingDescription = model.snapshot?.pendingSleepInterval != nil
+            ? ", unresolved sleep time must be resolved — unbilled" : ""
         func state(_ label: String, _ image: String) -> MenuBarStatus {
             MenuBarStatus(title: "", systemImage: image, accessibilityLabel: label + pendingDescription)
         }
@@ -21,8 +19,8 @@ struct MenuBarStatus: Equatable {
         if host.sleeping { return state("Tracking suspended for sleep", "moon.zzz") }
         switch model.timerStatus {
         case .idle:
-            return model.snapshot?.pendingSleepIntervals.isEmpty == false
-                ? state("Time needs review", "exclamationmark.clock") : state("Tracking stopped", "MenuIcon")
+            return model.snapshot?.pendingSleepInterval != nil
+                ? state("Time needs resolution", "exclamationmark.clock") : state("Tracking stopped", "MenuIcon")
         case .reviewRequired: return state("Time needs review", "exclamationmark.clock")
         case .paused: return state("Tracking paused — review time", "pause.circle")
         case .running:

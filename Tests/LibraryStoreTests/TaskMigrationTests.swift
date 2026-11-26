@@ -73,13 +73,13 @@ import Testing
         let request = TaskCreationRequest(
             id: UUID(), projectID: project, parentID: parent, name: "Child", confirmMigration: true, start: false)
         let result = try await library.createTask(request, expectedRevision: before.revision)
-        #expect(result.movedPendingCount == 1 && result.snapshot.pendingSleepIntervals.first?.id == pending)
+        #expect(result.movedPendingCount == 1 && result.snapshot.pendingSleepInterval?.id == pending)
         guard case .available(let receipt) = try await library.migrationUndoAvailability() else {
             Issue.record("Undo not available")
             return
         }
         let undone = try await library.undoTaskMigration(receiptID: receipt)
-        #expect(undone.pendingSleepIntervals == before.pendingSleepIntervals)
+        #expect(undone.pendingSleepInterval == before.pendingSleepInterval)
         await library.close()
     }
 

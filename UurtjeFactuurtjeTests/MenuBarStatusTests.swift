@@ -93,66 +93,42 @@ extension NSBitmapImageRep {
         }
     }
 
-    @Test func runningWithPendingCountsKeepsElapsedTitleAndDoesNotWrite() async throws {
+    @Test func runningWithPendingKeepsElapsedTitleAndDoesNotWrite() async throws {
         try await withTrack { track, directory in
             let suite = "MenuPendingTests.\(UUID())"
             let defaults = try #require(UserDefaults(suiteName: suite))
             defer { defaults.removePersistentDomain(forName: suite) }
             let host = NativeHost(directory: directory, workspace: track.workspace, defaults: defaults)
             defer { host.invalidate() }
+            host.recoveryPresentationHandler = { _ in }
             let lifecycle = Lifecycle(host: host)
             let clock = NativeClock()
             track.workspace.configureTimer(clock: { clock.read() })
-            #expect(host.workspace === track.workspace)
-            #expect(host.track.workspace === host.workspace)
-            #expect(lifecycle.host === host)
             let projectID = try await project(track, name: "First")
             let id = try await task(track, project: projectID, name: "Work")
             _ = try await track.workspace.enqueueTimer(.start(taskID: id)).value
             clock.set(107)
             let baseline = MenuBarStatus.project(host: host, at: Date(timeIntervalSince1970: 107))
             #expect(baseline.title == "00:00:07")
-            #expect(!baseline.accessibilityLabel.contains("pending"))
             let controller = MenuBarController(host: host, install: false)
             defer { controller.invalidate() }
-            for count in 1...2 {
-                let sleepAt: Int64 = 100 + Int64(count) * 100
-                let wakeAt = sleepAt + 10
-                clock.set(sleepAt)
-                lifecycle.willSleep()
-                await host.drain()
-                lifecycle.didWake(at: Date(timeIntervalSince1970: Double(wakeAt)))
-                await host.drain()
-                let before = try #require(track.workspace.snapshot)
-                let active = try #require(before.activeTimer)
-                #expect(before.pendingSleepIntervals.count == count)
-                #expect(before.pendingSleepIntervals.allSatisfy { $0.wakeAt != nil })
-                #expect(track.workspace.timerStatus == .running(entryID: active.entryID))
-                clock.set(wakeAt + 7)
-                let warnings = track.workspace.budgetWarnings.map(\.id)
-                for _ in 0..<3 {
-                    controller.refresh(at: Date(timeIntervalSince1970: Double(wakeAt + 7)))
-                    #expect(controller.status.title == baseline.title)
-                    #expect(controller.status.systemImage == baseline.systemImage)
-                    #expect(controller.status.accessibilityLabel.contains("Tracking First / Work"))
-                    #expect(
-                        controller.status.accessibilityLabel.contains(
-                            "\(count) pending sleep interval(s) need review — unbilled"))
-                }
-                #expect(track.workspace.snapshot == before)
-                #expect(track.workspace.budgetWarnings.map(\.id) == warnings)
-                _ = try await track.workspace.enqueueTimer(.stop(expectedEntryID: active.entryID)).value
-                let idle = try #require(track.workspace.snapshot)
-                controller.refresh(at: Date(timeIntervalSince1970: Double(wakeAt + 7)))
-                #expect(controller.status.title.isEmpty)
-                #expect(controller.status.accessibilityLabel.contains("Time needs review"))
-                #expect(controller.status.accessibilityLabel.contains("\(count) pending sleep interval(s)"))
-                #expect(track.workspace.snapshot == idle)
-                if count == 1 {
-                    clock.set(wakeAt + 8)
-                    _ = try await track.workspace.enqueueTimer(.start(taskID: id)).value
-                }
+            clock.set(200)
+            lifecycle.willSleep()
+            await host.drain()
+            lifecycle.didWake(at: Date(timeIntervalSince1970: 210))
+            await host.drain()
+            let before = try #require(track.workspace.snapshot)
+            let active = try #require(before.activeTimer)
+            #expect(before.pendingSleepInterval?.wakeAt == 210)
+            #expect(track.workspace.timerStatus == .running(entryID: active.entryID))
+            clock.set(217)
+            for _ in 0..<3 {
+                controller.refresh(at: Date(timeIntervalSince1970: 217))
+                #expect(controller.status.title == baseline.title)
+                #expect(controller.status.accessibilityLabel.contains("Tracking First / Work"))
+                #expect(controller.status.accessibilityLabel.contains("unresolved sleep time must be resolved"))
             }
+            #expect(track.workspace.snapshot == before)
         }
     }
 

@@ -196,7 +196,7 @@ private final class PreferenceObservation: @unchecked Sendable {
             ],
             entries: [TimeEntry(id: entry, taskID: task, startAt: 10, endAt: nil)],
             activeTimer: ActiveTimer(entryID: entry, checkpointAt: 20),
-            pendingSleepIntervals: [PendingSleepInterval(id: UUID(), taskID: task, sleepAt: 1, wakeAt: 5)])
+            pendingSleepInterval: PendingSleepInterval(id: UUID(), taskID: task, sleepAt: 1, wakeAt: 5))
         var operations = WorkspaceOperations()
         operations.snapshot = { _ in before }
         let model = WorkspaceModel(directory: directory, operations: operations)

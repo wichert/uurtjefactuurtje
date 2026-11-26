@@ -171,7 +171,7 @@ import Testing
             track.workspace.configureTimer(clock: { 150 })
             let generation = track.workspace.timerLifecycleGate.latchSleep()
             await track.workspace.enqueueSleepObservation(generation: generation).value
-            #expect(track.workspace.snapshot?.pendingSleepIntervals.count == 1)
+            #expect(track.workspace.snapshot?.pendingSleepInterval != nil)
             #expect(try track.projectTaskTotals()[.project(projectID)] == 50)
             track.workspace.configureTimer(clock: { 300 })
             await track.workspace.enqueueWakeObservation(generation: generation, observedAt: 300).value
@@ -179,7 +179,7 @@ import Testing
             _ = try await track.workspace.enqueueTimer(.checkpoint).value
             track.workspace.configureTimer(clock: { 350 })
             #expect(try track.projectTaskTotals()[.project(projectID)] == 100)
-            #expect(track.workspace.snapshot?.pendingSleepIntervals.first?.wakeAt == 300)
+            #expect(track.workspace.snapshot?.pendingSleepInterval?.wakeAt == 300)
             await track.workspace.close()
             try await track.workspace.open()
             #expect(track.workspace.timerStatus == .reviewRequired)
@@ -199,7 +199,7 @@ import Testing
                 -> LibrarySnapshot {
                 LibrarySnapshot(
                     schemaVersion: 2, revision: base.revision, projects: base.projects,
-                    tasks: tasks, entries: entries, activeTimer: active, pendingSleepIntervals: [])
+                    tasks: tasks, entries: entries, activeTimer: active, pendingSleepInterval: nil)
             }
             let huge = TimeEntry(id: UUID(), taskID: first, startAt: 0, endAt: Int64.max)
             let one = TimeEntry(id: UUID(), taskID: second, startAt: 0, endAt: 1)

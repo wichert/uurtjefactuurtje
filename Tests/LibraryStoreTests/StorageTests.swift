@@ -46,6 +46,29 @@ private func addProject(_ store: isolated Storage, id: String, name: String = "C
         }
     }
 
+    @Test func pendingSleepIntervalIsSingletonAtTheDatabaseBoundary() async throws {
+        try await withPrivateDatabase { url in
+            let project = UUID().uuidString.lowercased()
+            let task = UUID().uuidString.lowercased()
+            try raw(url, """
+                INSERT INTO projects VALUES ('\(project)', 'Client', '1', 'EUR', 0);
+                INSERT INTO tasks VALUES ('\(task)', '\(project)', NULL, 'Work', NULL, 0);
+                INSERT INTO pending_sleep_intervals VALUES ('\(UUID().uuidString.lowercased())', '\(task)', 100, NULL);
+                """)
+            let store = try Storage(privateDatabaseAt: url)
+            #expect(try await store.snapshot().pendingSleepInterval?.sleepAt == 100)
+            await #expect(throws: StorageError.self) {
+                try await store.runCommand(
+                    "INSERT INTO pending_sleep_intervals VALUES (?, ?, ?, ?)",
+                    bindings: [
+                        .text(UUID().uuidString.lowercased()), .text(task),
+                        .integer(200), .integer(300)
+                    ], expectedChanges: 1)
+            }
+            await store.close()
+        }
+    }
+
     @Test func schemaAndStrictCodecsFailClosed() async throws {
         for mutation in [
             "CREATE VIEW extra AS SELECT * FROM projects",
@@ -305,11 +328,10 @@ extension StorageTests {
         #expect(value.entries.contains(TimeEntry(id: entry, taskID: leaf, startAt: 0, endAt: 4320)))
         #expect(value.activeTimer == ActiveTimer(entryID: active, checkpointAt: 5001))
         #expect(
-            value.pendingSleepIntervals == [
+            value.pendingSleepInterval ==
                 PendingSleepInterval(
                     id: pending, taskID: leaf,
-                    sleepAt: 4400, wakeAt: 4500)
-            ])
+                    sleepAt: 4400, wakeAt: 4500))
         try SnapshotValidator.validate(value)
         await library.close()
         let reopened = try await Library.open(at: root)
@@ -447,11 +469,10 @@ extension StorageTests {
         let state = try await owner.snapshot()
         #expect(state.tasks.first?.budgetMinutes == 1 && state.activeTimer == nil)
         #expect(
-            state.pendingSleepIntervals == [
+            state.pendingSleepInterval ==
                 PendingSleepInterval(
                     id: pending, taskID: task, sleepAt: 100,
-                    wakeAt: nil)
-            ])
+                    wakeAt: nil))
         await owner.close()
         let bytes = try Data(contentsOf: url)
         let reopened = try await Library.open(at: root)

@@ -62,7 +62,7 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
                 schemaVersion: 2, revision: baseline.revision + 1,
                 projects: baseline.projects,
                 tasks: [TaskRecord(id: id, projectID: projectID, name: "Task", budgetMinutes: 100)],
-                entries: [], activeTimer: nil, pendingSleepIntervals: [])
+                entries: [], activeTimer: nil, pendingSleepInterval: nil)
             let fresh = BudgetWarningBatch(id: UUID(), warnings: batch.warnings)
             notifications.consume(snapshot: enabled, batches: [batch, fresh])
             notifications.consume(snapshot: enabled, batches: [batch, fresh])
@@ -117,9 +117,10 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
         }
     }
 
-    @Test func savedPendingReviewDefersUnbilledAndStopsOwnedTimerOnce() async throws {
+    @Test func savedPendingBlocksQuitWithoutWritingOrClosing() async throws {
         try await withTrack { track, directory in
             let host = NativeHost(directory: directory, workspace: track.workspace)
+            defer { host.invalidate() }
             let clock = NativeClock()
             track.workspace.configureTimer(clock: { clock.read() })
             let projectID = try await project(track)
@@ -127,51 +128,21 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
             host.submitTimer(.start(taskID: id))
             await host.drain()
             let lifecycle = Lifecycle(host: host)
+            host.recoveryPresentationHandler = { _ in }
+            host.installSceneActions(workspace: {}, settings: {})
             clock.set(110)
             lifecycle.willSleep()
             await host.drain()
             lifecycle.didWake(at: Date(timeIntervalSince1970: 120))
             await host.drain()
             let before = try #require(track.workspace.snapshot)
-            #expect(before.pendingSleepIntervals.count == 1)
-            let writes = NativeQuitWriteProbe()
-            let expectedStop = host.track.ownedStop
-            var closes = 0
+            #expect(before.pendingSleepInterval != nil && host.recoveryPresented)
             var replies = 0
-            track.workspace.configureTimer(
-                clock: { 130 },
-                write: { library, command, revision, instant, entry in
-                    writes.record()
-                    #expect(command == expectedStop)
-                    return try await library.performTimer(
-                        command, expectedRevision: revision, instant: instant,
-                        newEntryID: entry)
-                })
-            lifecycle.confirmQuit = { true }
-            lifecycle.close = { model in
-                closes += 1
-                #expect(model.snapshot?.activeTimer == nil)
-                #expect(model.snapshot?.pendingSleepIntervals == before.pendingSleepIntervals)
-                #expect(model.snapshot?.entries.contains { $0.startAt == 110 && $0.endAt == 120 } == false)
-                await model.close()
-            }
-            await withCheckedContinuation { done in
-                lifecycle.reply = { succeeded in
-                    #expect(succeeded)
-                    replies += 1
-                    done.resume()
-                }
-                lifecycle.requestQuit()
-                lifecycle.requestQuit()
-            }
-            #expect(writes.count == 1 && closes == 1 && replies == 1)
+            lifecycle.reply = { accepted in #expect(!accepted); replies += 1 }
             lifecycle.requestQuit()
-            #expect(closes == 1 && replies == 1)
-            try await track.workspace.open()
-            #expect(track.workspace.snapshot?.pendingSleepIntervals == before.pendingSleepIntervals)
-            #expect(track.workspace.snapshot?.activeTimer == nil)
-            #expect(lifecycle.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared) == false)
-            host.invalidate()
+            #expect(replies == 1)
+            #expect(track.workspace.snapshot == before)
+            #expect(host.recoveryPresented && host.quitAttempt == nil)
         }
     }
 
@@ -189,7 +160,7 @@ final class NativeQuitWriteProbe: @unchecked Sendable {
             lifecycle.willSleep()
             await host.drain()
             let before = try #require(track.workspace.snapshot)
-            #expect(before.pendingSleepIntervals.first?.wakeAt == nil)
+            #expect(before.pendingSleepInterval?.wakeAt == nil)
             let writes = NativeQuitWriteProbe()
             track.workspace.configureTimer(
                 clock: { 999 },

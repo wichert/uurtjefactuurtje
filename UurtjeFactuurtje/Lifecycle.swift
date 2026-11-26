@@ -29,11 +29,6 @@ import LibraryStore
             running: running,
             sleeping: sleeping || host.sleeping,
         )
-        if !uncertain && !unavailable && snapshot?.pendingSleepIntervals.isEmpty == false {
-            details.append(
-                "Saved pending sleep time will remain unbilled. "
-                    + "Defer its review until next launch; Quit will not include or discard it.")
-        }
         if draft {
             details.append(
                 "The open unsent editor draft, including any suspended task draft, "
@@ -88,6 +83,8 @@ import LibraryStore
         let wasSleeping: Bool
     }
 
+    enum IdleReason { case sleep, screenLock }
+
     let host: NativeHost
     private var quitReview: QuitReview?
     static let checkpointInterval: TimeInterval = 15
@@ -96,12 +93,13 @@ import LibraryStore
     private var budget: Timer?
     private var observers: [NSObjectProtocol] = []
     private var sleepGeneration: UInt64?
-    private(set) var sleeping = false
+    private var idleReasons: Set<IdleReason> = []
+    var sleeping: Bool { !idleReasons.isEmpty }
     private var menu: MenuBarController?
     private var notifications: BudgetNotifications?
     private var closingResources = false
     private var droppedCloseObservation = false
-    private var reviewAfterClose = false
+    private var reviewOnReturn = false
     lazy var confirmQuit: () async -> Bool = { @MainActor [weak self] in
         guard let self else { return false }
         return await QuitConfirmation.present(host: host, sleeping: sleeping || host.sleeping)
@@ -156,7 +154,21 @@ import LibraryStore
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.didWake(at: Date()) }
             })
+        let distributed = DistributedNotificationCenter.default()
+        distributed.addObserver(
+            self, selector: #selector(screenDidLock(_:)), name: Notification.Name("com.apple.screenIsLocked"),
+            object: nil, suspensionBehavior: .deliverImmediately)
+        distributed.addObserver(
+            self, selector: #selector(screenDidUnlock(_:)), name: Notification.Name("com.apple.screenIsUnlocked"),
+            object: nil, suspensionBehavior: .deliverImmediately)
         host.reopen()
+        host.requestAutoReviewIfNeeded()
+    }
+    @objc private func screenDidLock(_ notification: Notification) {
+        willSleep(.screenLock)
+    }
+    @objc private func screenDidUnlock(_ notification: Notification) {
+        didWake(at: Date(), .screenLock)
     }
     private func schedule() {
         checkpoint = Self.scheduler(every: Self.checkpointInterval) { [weak self] in
@@ -200,8 +212,8 @@ import LibraryStore
     func applicationDidResignActive(_ notification: Notification) {
         checkpointTick()
     }
-    func willSleep() {
-        sleeping = true
+    func willSleep(_ reason: IdleReason = .sleep) {
+        guard idleReasons.insert(reason).inserted, idleReasons.count == 1 else { return }
         host.sleeping = true
         let generation = host.workspace.timerLifecycleGate.latchSleep()
         sleepGeneration = generation
@@ -209,7 +221,12 @@ import LibraryStore
             droppedCloseObservation = true
             return
         }
-        host.retain(host.workspace.enqueueSleepObservation(generation: generation))
+        if host.recoveryPresented {
+            // A second absence cannot replace the one saved interval or be billed automatically.
+            reviewOnReturn = true
+        } else {
+            host.retain(host.workspace.enqueueSleepObservation(generation: generation))
+        }
         menu?.refresh(at: Date())
     }
     static func wholeSecond(_ date: Date) -> Int64? {
@@ -219,36 +236,30 @@ import LibraryStore
         else { return nil }
         return Int64(value)
     }
-    func didWake(at date: Date) {
-        sleeping = false
+    func didWake(at date: Date, _ reason: IdleReason = .sleep) {
+        guard idleReasons.remove(reason) != nil, idleReasons.isEmpty else { return }
         host.sleeping = false
         guard !closingResources else {
             droppedCloseObservation = true
             sleepGeneration = nil
             return
         }
-        if reviewAfterClose {
-            reviewAfterClose = false
-            sleepGeneration = nil
-            host.workspace.requireTimerReviewAfterClose(sleeping: false)
+        if reviewOnReturn {
+            reviewOnReturn = false
+            host.workspace.requireInterruptedTimerReview(sleeping: false)
             host.requestAutoReviewIfNeeded()
-            menu?.refresh(at: date)
-            return
+        } else if let generation = sleepGeneration, let instant = Self.wholeSecond(date) {
+            let observation = host.workspace.enqueueWakeObservation(generation: generation, observedAt: instant)
+            host.retain(Task { @MainActor [host] in
+                await observation.value
+                if host.workspace.timerLifecycleGate.currentGeneration == generation,
+                    case .paused = host.workspace.timerStatus {
+                    // Without a durable continuation, do not let an owned timer bill past a failed observation.
+                    host.workspace.requireInterruptedTimerReview(sleeping: false)
+                }
+            })
         }
-        if let generation = sleepGeneration, let instant = Self.wholeSecond(date) {
-            sleepGeneration = nil
-            let observation = host.workspace.enqueueWakeObservation(
-                generation: generation,
-                observedAt: instant,
-            )
-            host.retain(
-                Task { @MainActor [host] in
-                    await observation.value
-                    host.requestAutoReviewIfNeeded()
-                })
-        } else {
-            host.requestAutoReviewIfNeeded()
-        }
+        sleepGeneration = nil
         menu?.refresh(at: date)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -268,6 +279,7 @@ import LibraryStore
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
         observers.removeAll()
+        DistributedNotificationCenter.default().removeObserver(self)
         menu?.invalidate()
         host.invalidate()
     }
@@ -276,7 +288,11 @@ import LibraryStore
 
 @MainActor extension Lifecycle {
     func requestQuit() {
-        guard let token = host.beginQuit() else { return }
+        guard host.quitAttempt == nil else { return }
+        guard let token = host.beginQuit() else {
+            reply(false)
+            return
+        }
         Task { @MainActor in
             var permitted = false
             quitReview = nil
@@ -319,7 +335,6 @@ import LibraryStore
             host.track.sheet != nil
             || host.track.suspendedTaskDraft != nil
             || review.snapshot?.activeTimer != nil
-            || review.snapshot?.pendingSleepIntervals.isEmpty == false
             || !host.available || review.snapshot == nil
             || review.uncertain || review.wasSleeping
         guard needsConfirmation else { return true }
@@ -363,8 +378,8 @@ import LibraryStore
             !host.hasUncertainPublication, !sleeping, !host.sleeping,
             host.workspace.timerLifecycleGate.currentGeneration == review.generation,
             host.workspace.snapshot?.activeTimer == nil,
-            host.workspace.snapshot?.pendingSleepIntervals
-                == review.snapshot?.pendingSleepIntervals
+            host.workspace.snapshot?.pendingSleepInterval
+                == review.snapshot?.pendingSleepInterval
         else {
             host.track.failure = """
                 Time or library state changed while stopping. Inspect it before choosing Quit again; \
@@ -388,8 +403,8 @@ import LibraryStore
         } catch {
             // Reconcile before finishQuit releases admission, without replaying observations.
             if droppedCloseObservation {
-                reviewAfterClose = sleeping || host.sleeping
-                host.workspace.requireTimerReviewAfterClose(sleeping: reviewAfterClose)
+                reviewOnReturn = sleeping || host.sleeping
+                host.workspace.requireInterruptedTimerReview(sleeping: reviewOnReturn)
                 host.requestAutoReviewIfNeeded()
             }
             host.track.failure = """

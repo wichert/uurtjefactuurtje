@@ -31,18 +31,19 @@ extension NativeHostTests {
             let token = host.track.routeToken
             host.newProject()
             host.addTime()
-            host.openReview()
             host.revealNotificationTask(leaf)
             #expect(host.track.routeToken == token)
             #expect(host.track.sheet != nil)
-            #expect(host.track.feedback != nil)
             #expect(WorkspaceMenu.matchingTasks(host.track, query: "Parent") == [leaf])
             #expect(!WorkspaceMenu.recentTasks(host.track).contains(root))
             host.track.cancelSheet()
+            let clock = NativeClock()
+            track.workspace.configureTimer(clock: { clock.read() })
             host.submitTimer(.start(taskID: leaf))
             await host.drain()
             #expect(WorkspaceMenu.stopTitle(host.track) == "Stop Project / Parent / Leaf")
             #expect(WorkspaceMenu.recentTasks(host.track).isEmpty)
+            clock.set(101)
             host.submitTimer(.stop(expectedEntryID: track.workspace.snapshot?.activeTimer?.entryID))
             await host.drain()
             #expect(WorkspaceMenu.recentTasks(host.track) == [leaf])
@@ -52,7 +53,7 @@ extension NativeHostTests {
     }
 
     @Test(arguments: [false, true])
-    func reviewRouteSurvivesSceneActionReinstallation(afterSleep: Bool) async throws {
+    func immediateRecoverySurvivesSceneActionReinstallation(afterSleep: Bool) async throws {
         try await withTrack { track, directory in
             let host = NativeHost(directory: directory, workspace: track.workspace)
             defer { host.invalidate() }
@@ -69,28 +70,26 @@ extension NativeHostTests {
                 await host.drain()
                 lifecycle.didWake(at: Date(timeIntervalSince1970: 120))
                 await host.drain()
-                #expect(track.workspace.snapshot?.pendingSleepIntervals.count == 1)
+                #expect(track.workspace.snapshot?.pendingSleepInterval != nil)
             }
             let before = track.workspace.snapshot
             var opens = 0
+            var presentations = 0
+            host.recoveryPresentationHandler = { _ in presentations += 1 }
             host.installSceneActions(
                 workspace: {
                     opens += 1
                     // Opening first window can synchronously re-evaluate NativeCommands.body.
                     host.installSceneActions(workspace: { opens += 1 }, settings: {})
                 }, settings: {})
-            host.openReview()
-            #expect(opens == 1)
-            #expect(host.track.destination == .track)
-            guard case .timeReview = host.track.sheet else {
-                Issue.record("Missing time review")
-                return
-            }
-            #expect(host.track.feedback == nil)
+            #expect(opens == 0)
+            #expect(presentations == (afterSleep ? 1 : 0))
+            #expect(host.recoveryPresented == afterSleep)
             #expect(track.workspace.snapshot == before)
-            host.track.cancelSheet()
-            host.openReports()
-            #expect(opens == 2 && host.track.destination == .reports)
+            if !afterSleep {
+                host.openReports()
+                #expect(opens == 1 && host.track.destination == .reports)
+            }
         }
     }
 
@@ -109,11 +108,9 @@ extension NativeHostTests {
                 },
                 settings: {
                     events.append("settings")
-                    // The initial route must finish before the settings callback runs.
-                    #expect(host.track.sheet != nil)
                     host.openTrack()
                 })
-            host.openReview()
+            host.openReports()
             #expect(events == ["workspace", "settings", "workspace", "workspace"])
             #expect(host.track.destination == .track)
             #expect(host.track.feedback == nil)
@@ -131,6 +128,7 @@ extension NativeHostTests {
         timer.invalidate()
         try await withTrack { track, directory in
             let host = NativeHost(directory: directory, workspace: track.workspace)
+            host.recoveryPresentationHandler = { _ in }
             let lifecycle = Lifecycle(host: host)
             let clock = NativeClock()
             track.workspace.configureTimer(clock: { clock.read() })
@@ -145,10 +143,10 @@ extension NativeHostTests {
                 track.workspace.timerStatus
                     != .running(entryID: track.workspace.snapshot!.activeTimer!.entryID))
             await lifecycle.host.drain()
-            #expect(track.workspace.snapshot?.pendingSleepIntervals.first?.sleepAt == 110)
+            #expect(track.workspace.snapshot?.pendingSleepInterval?.sleepAt == 110)
             lifecycle.didWake(at: Date(timeIntervalSince1970: 120.99))
             await lifecycle.host.drain()
-            #expect(track.workspace.snapshot?.pendingSleepIntervals.first?.wakeAt == 120)
+            #expect(track.workspace.snapshot?.pendingSleepInterval?.wakeAt == 120)
             #expect(!lifecycle.sleeping)
             host.invalidate()
             lifecycle.host.invalidate()

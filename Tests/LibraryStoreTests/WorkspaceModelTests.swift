@@ -130,7 +130,7 @@ private actor WorkspaceTestGate {
         #expect(fixture.clock.reads == reads)
         await model.enqueueSleepObservation(generation: generation).value
         #expect(model.timerStatus == .reviewRequired && model.snapshot?.activeTimer == nil)
-        #expect(model.snapshot?.pendingSleepIntervals.first?.sleepAt == 1000)
+        #expect(model.snapshot?.pendingSleepInterval?.sleepAt == 1000)
         await fixture.dispose()
     }
 
@@ -335,7 +335,7 @@ private actor WorkspaceTestGate {
         #expect(model.issue == .busy && model.availability == .blocked)
         await owner.close()
         try await model.open()
-        #expect(model.availability == .ready && model.snapshot?.pendingSleepIntervals.count == 1)
+        #expect(model.availability == .ready && model.snapshot?.pendingSleepInterval != nil)
         let before = model.snapshot
         await #expect(throws: CommandError.recoveryRequired) {
             try await model.submit(.renameTask(id: task, name: "No"), expectedRevision: before!.revision)
@@ -636,7 +636,7 @@ extension WorkspaceModelTests {
         fixture.clock.set(200)
         await model.enqueueSleepObservation(generation: generation).value
         #expect(model.snapshot?.activeTimer == nil && model.snapshot?.entries.isEmpty == true)
-        #expect(model.snapshot?.pendingSleepIntervals.first?.sleepAt == 100)
+        #expect(model.snapshot?.pendingSleepInterval?.sleepAt == 100)
         await #expect(throws: TimerError.reviewRequired) { try await model.enqueueTimer(.checkpoint).value }
         await model.enqueueWakeObservation(generation: generation, observedAt: 110).value
         #expect(model.snapshot?.activeTimer?.checkpointAt == 110)
@@ -848,7 +848,7 @@ extension WorkspaceModelTests {
             let pending = PendingSleepInterval(id: UUID(), taskID: correctionFixture.leaf, sleepAt: 50, wakeAt: wake)
             #expect(throws: TimerError.reviewRequired) {
                 try gate.correctionSample(
-                    in: correctionFixture.state(pending: [pending]), ownedEntryID: nil, paused: false,
+                    in: correctionFixture.state(pending: pending), ownedEntryID: nil, paused: false,
                     clock: { 100 })
             }
         }
@@ -864,7 +864,7 @@ extension WorkspaceModelTests {
         let generation = model.timerLifecycleGate.latchSleep()
         await model.enqueueSleepObservation(generation: generation).value
         let before = try #require(model.snapshot)
-        let shown = try SleepPlanner.skip(#require(before.pendingSleepIntervals.first), in: before)
+        let shown = try SleepPlanner.skip(#require(before.pendingSleepInterval), in: before)
         let barrier = TimerTestBarrier()
         model.configureTimeReview { library, command, receipt, revision, instant in
             let committed = try await library.performTimeReview(
@@ -889,7 +889,7 @@ extension WorkspaceModelTests {
         let stop = try await model.enqueueTimer(.stop(expectedEntryID: started.activeTimer?.entryID)).value
         #expect(model.canUndoTimeReview && stop.activeTimer == nil)
         _ = try await model.enqueueTimeReview(.undo).value
-        #expect(!model.canUndoTimeReview && model.snapshot?.pendingSleepIntervals == before.pendingSleepIntervals)
+        #expect(!model.canUndoTimeReview && model.snapshot?.pendingSleepInterval == before.pendingSleepInterval)
         await fixture.dispose()
     }
 
@@ -901,7 +901,7 @@ extension WorkspaceModelTests {
         let first = model.timerLifecycleGate.latchSleep()
         await model.enqueueSleepObservation(generation: first).value
         let sleeping = try #require(model.snapshot)
-        let shown = try SleepPlanner.skip(#require(sleeping.pendingSleepIntervals.first), in: sleeping)
+        let shown = try SleepPlanner.skip(#require(sleeping.pendingSleepInterval), in: sleeping)
         let barrier = TimerTestBarrier()
         model.configureTimeReview { library, command, receipt, revision, instant in
             let committed = try await library.performTimeReview(
@@ -973,7 +973,7 @@ extension WorkspaceModelTests {
                 let generation = model.timerLifecycleGate.latchSleep()
                 await model.enqueueSleepObservation(generation: generation).value
                 let sleeping = try #require(model.snapshot)
-                let shown = try SleepPlanner.skip(#require(sleeping.pendingSleepIntervals.first), in: sleeping)
+                let shown = try SleepPlanner.skip(#require(sleeping.pendingSleepInterval), in: sleeping)
                 if undoing { _ = try await model.enqueueTimeReview(.skip(shown)).value }
                 let before = try #require(model.snapshot)
                 let command: TimeReviewCommand = undoing ? .undo : .skip(shown)
@@ -1098,7 +1098,7 @@ extension WorkspaceModelTests {
         fixture.clock.set(150)
         await model.enqueueWakeObservation(generation: generation, observedAt: 150).value
         let saved = try #require(model.snapshot)
-        #expect(saved.pendingSleepIntervals.count == 1 && saved.pendingSleepIntervals[0].wakeAt == 150)
+        #expect(saved.pendingSleepInterval?.wakeAt == 150)
         fixture.clock.set(160)
         let reads = fixture.clock.reads
         let report = try model.projectReport(fixture.project, period: .allTime, calendar: calendar)
@@ -1124,12 +1124,14 @@ extension WorkspaceModelTests {
             schema: Int64 = 2, revision: Int64 = 1,
             projects: [Project]? = nil, tasks: [TaskRecord]? = nil,
             entries: [TimeEntry]? = nil, active: ActiveTimer? = nil,
-            stopped: Bool = false, intervals: [PendingSleepInterval]? = nil
+            stopped: Bool = false, intervals: PendingSleepInterval? = nil,
+            removePending: Bool = false
         ) -> LibrarySnapshot {
             LibrarySnapshot(
                 schemaVersion: schema, revision: revision,
                 projects: projects ?? [project], tasks: tasks ?? [task], entries: entries ?? [entry],
-                activeTimer: stopped ? nil : (active ?? timer), pendingSleepIntervals: intervals ?? [pending])
+                activeTimer: stopped ? nil : (active ?? timer),
+                pendingSleepInterval: removePending ? nil : (intervals ?? pending))
         }
         let base = snapshot()
         let warning = TaskRecord(
@@ -1181,12 +1183,13 @@ extension WorkspaceModelTests {
             [
                 snapshot(schema: 1), snapshot(stopped: true),
                 snapshot(active: ActiveTimer(entryID: UUID(), checkpointAt: 110)),
-                snapshot(projects: []), snapshot(tasks: []), snapshot(entries: []), snapshot(intervals: [])
+                snapshot(projects: []), snapshot(tasks: []), snapshot(entries: []),
+                snapshot(removePending: true)
             ]
             + changedProjects.map { snapshot(projects: [$0]) }
             + changedTasks.map { snapshot(tasks: [$0]) }
             + changedEntries.map { snapshot(entries: [$0]) }
-            + changedIntervals.map { snapshot(intervals: [$0]) }
+            + changedIntervals.map { snapshot(intervals: $0) }
         for changed in changes {
             #expect(!base.editorRelevantEquals(changed))
             #expect(!changed.editorRelevantEquals(base))
@@ -1201,10 +1204,7 @@ extension WorkspaceModelTests {
         #expect(!snapshot(tasks: [task, secondTask]).editorRelevantEquals(snapshot(tasks: [secondTask, task])))
         #expect(!snapshot(entries: [entry, secondEntry]).editorRelevantEquals(snapshot(entries: [secondEntry, entry])))
         #expect(
-            !snapshot(intervals: [
-                pending,
-                secondPending
-            ]).editorRelevantEquals(snapshot(intervals: [secondPending, pending])))
+            !snapshot(intervals: pending).editorRelevantEquals(snapshot(intervals: secondPending)))
     }
 }
 
@@ -1693,7 +1693,7 @@ private func editorOperations(_ probe: EditorOperationProbe) -> WorkspaceOperati
 }
 
 extension WorkspaceModelTests {
-    @Test func requireTimerReviewAfterCloseNilSnapshotAndBlockedStateNoWriteReplay() async throws {
+    @Test func requireInterruptedTimerReviewNilSnapshotAndBlockedStateNoWriteReplay() async throws {
         let directory = workspaceDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -1702,7 +1702,7 @@ extension WorkspaceModelTests {
         try await closed.open()
         await closed.close()
         let closedGeneration = closed.timerLifecycleGate.currentGeneration
-        closed.requireTimerReviewAfterClose(sleeping: false)
+        closed.requireInterruptedTimerReview(sleeping: false)
         #expect(closed.availability == .closed)
         #expect(closed.snapshot == nil)
         #expect(closed.timerLifecycleGate.currentGeneration == closedGeneration)
@@ -1740,14 +1740,14 @@ extension WorkspaceModelTests {
         #expect(model.availability == .blocked)
         #expect(model.snapshot == started)
         let before = writes.value
-        model.requireTimerReviewAfterClose(sleeping: false)
+        model.requireInterruptedTimerReview(sleeping: false)
         #expect(model.availability == .blocked)
         #expect(model.snapshot == started)
         #expect(writes.value == before)  // no replay/write side effect
         await fixture.dispose()
     }
 
-    @Test func requireTimerReviewAfterCloseRepeatedCallPreservesNextSleepLatch() async throws {
+    @Test func requireInterruptedTimerReviewRepeatedCallPreservesNextSleepLatch() async throws {
         let fixture = try await TimerFixture.make()
         let model = fixture.model
 
@@ -1755,12 +1755,12 @@ extension WorkspaceModelTests {
         #expect(model.timerStatus == .running(entryID: try #require(started.activeTimer).entryID))
 
         model.timerLifecycleGate.latchSleep()
-        model.requireTimerReviewAfterClose(sleeping: true)
+        model.requireInterruptedTimerReview(sleeping: true)
         #expect(model.timerStatus == .reviewRequired)
         #expect(model.timerLifecycleGate.state().sleeping)
 
         // Repeated call after physical wake clears stale latch but keeps review-required ownership semantics.
-        model.requireTimerReviewAfterClose(sleeping: false)
+        model.requireInterruptedTimerReview(sleeping: false)
         #expect(model.timerStatus == .reviewRequired)
         #expect(!model.timerLifecycleGate.state().sleeping)
 
